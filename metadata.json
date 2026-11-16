@@ -1,0 +1,6 @@
+{
+  "name": "Sisli Doğu Atlası",
+  "description": "Masaüstü RPG oyunları için JRPG tarzında hazırlanmış, kıtanın doğusundaki gizemli sisli orman bölgesi haritası ve oyun yöneticisi atlası.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
