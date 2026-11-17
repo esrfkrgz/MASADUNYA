@@ -271,6 +271,11 @@ export const ProtagonistDrawer: React.FC<ProtagonistDrawerProps> = ({
                   {protagonist.title} · <span className={moodColor}>{protagonist.mood}</span> ·{' '}
                   <span className="text-[#67C7C0]">{partyBonus.modeLabel}</span>
                 </p>
+                {protagonist.appearanceNote && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-[#A3B1AA]">
+                    {protagonist.appearanceNote}
+                  </p>
+                )}
               </>
             ) : (
               <form onSubmit={handleSaveIdentity} className="space-y-1.5">

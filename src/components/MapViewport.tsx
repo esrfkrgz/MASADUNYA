@@ -47,6 +47,8 @@ interface MapViewportProps {
   soundEnabled: boolean;
   isPlacingPin: boolean;
   resetKey?: number;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
   onSelectLocation: (id: string) => void;
   onSelectMazgal: (id: string) => void;
   onPlacePinAt: (x: number, y: number) => void;
@@ -90,6 +92,8 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   soundEnabled,
   isPlacingPin,
   resetKey = 0,
+  isFullscreen,
+  onToggleFullscreen,
   onSelectLocation,
   onSelectMazgal,
   onPlacePinAt,
@@ -111,7 +115,8 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   const [didDrag, setDidDrag] = useState(false);
   const [mapImageError, setMapImageError] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isExpanded = isFullscreen ?? internalExpanded;
 
   useEffect(() => {
     if (resetKey === 0) return;
@@ -161,8 +166,12 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   };
 
   const handleToggleExpanded = async () => {
-    const next = !isExpanded;
-    setIsExpanded(next);
+    if (onToggleFullscreen) {
+      onToggleFullscreen();
+      return;
+    }
+    const next = !internalExpanded;
+    setInternalExpanded(next);
     try {
       if (next && wrapperRef.current?.requestFullscreen) {
         await wrapperRef.current.requestFullscreen();
@@ -224,13 +233,19 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       ref={wrapperRef}
       aria-label="İnteraktif bölge haritası"
       className={
-        isExpanded
+        isFullscreen
+          ? 'flex flex-1 min-h-0 flex-col gap-2'
+          : internalExpanded
           ? 'fixed inset-0 z-50 flex flex-col justify-between gap-2 bg-[#080E0C] p-3 sm:p-5 overflow-y-auto'
           : 'flex flex-col gap-3'
       }
     >
       {/* Workspace Map Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#D4A853]/15 bg-[#141F1B] px-3.5 py-2.5">
+      <div
+        className={`flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-[#D4A853]/15 bg-[#141F1B] ${
+          isExpanded ? 'px-3 py-1.5 shrink-0' : 'px-3.5 py-2.5'
+        }`}
+      >
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -399,22 +414,39 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
       {/* Main Map Canvas */}
       <div
-        ref={containerRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={() => setIsDragging(false)}
-        onWheel={handleWheel}
-        className={`map-crisp-container relative w-full aspect-[2752/1536] overflow-hidden rounded-lg border border-[#D4A853]/25 bg-[#0A110E] select-none ${
-          isPlacingPin
-            ? 'cursor-crosshair'
-            : zoom > 1
-            ? isDragging
-              ? 'cursor-grabbing'
-              : 'cursor-grab'
-            : 'cursor-default'
-        }`}
+        className={
+          isFullscreen
+            ? 'flex-1 min-h-0 flex items-center justify-center [container-type:size] overflow-hidden'
+            : 'w-full'
+        }
       >
+        <div
+          ref={containerRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={() => setIsDragging(false)}
+          onWheel={handleWheel}
+          style={
+            isFullscreen
+              ? {
+                  width: 'min(100cqw, calc(100cqh * 2752 / 1536))',
+                  aspectRatio: '2752 / 1536',
+                }
+              : undefined
+          }
+          className={`map-crisp-container relative overflow-hidden rounded-lg border border-[#D4A853]/25 bg-[#0A110E] select-none ${
+            isFullscreen ? '' : 'w-full aspect-[2752/1536]'
+          } ${
+            isPlacingPin
+              ? 'cursor-crosshair'
+              : zoom > 1
+              ? isDragging
+                ? 'cursor-grabbing'
+                : 'cursor-grab'
+              : 'cursor-default'
+          }`}
+        >
         <div
           ref={innerRef}
           className="relative"
@@ -726,43 +758,46 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Compact Legend Strip under Map */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[#9AA8A1]">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <span>{locations.filter((l) => l.discovered).length} / {locations.length} Konum Keşfedildi</span>
-          <span aria-hidden="true">·</span>
-          <span>
-            Konumun:{' '}
-            <strong className="font-medium text-[#EDE6D6]">
-              {protagonist
-                ? partyLoc?.name ?? `Açık Arazi (Mazgal ${protagonist.mazgalId})`
-                : partyLoc?.name ?? 'Belirtilmedi'}
-            </strong>
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          {onOpenProtagonist && !isExpanded && (
-            <button
-              type="button"
-              onClick={onOpenProtagonist}
-              className="font-medium text-[#67C7C0] hover:text-[#9CE3DD] cursor-pointer"
-            >
-              Karakterim ({protagonist?.name ?? 'Sen'})
-            </button>
-          )}
-          {onOpenInspector && !isExpanded && (
-            <button
-              type="button"
-              onClick={onOpenInspector}
-              className="font-medium text-[#D4A853] hover:text-[#E5BD6E] cursor-pointer"
-            >
-              Seçili Konum Detayını Aç
-            </button>
-          )}
-          <span className="hidden md:inline">Yakınlaştırmak için tekerleği veya +/- tuşlarını kullanın</span>
-        </div>
       </div>
+
+      {/* Compact Legend Strip under Map (hidden in parent single-screen fullscreen so chatbox gets full room) */}
+      {!isFullscreen && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[#9AA8A1]">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>{locations.filter((l) => l.discovered).length} / {locations.length} Konum Keşfedildi</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              Konumun:{' '}
+              <strong className="font-medium text-[#EDE6D6]">
+                {protagonist
+                  ? partyLoc?.name ?? `Açık Arazi (Mazgal ${protagonist.mazgalId})`
+                  : partyLoc?.name ?? 'Belirtilmedi'}
+              </strong>
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            {onOpenProtagonist && !isExpanded && (
+              <button
+                type="button"
+                onClick={onOpenProtagonist}
+                className="font-medium text-[#67C7C0] hover:text-[#9CE3DD] cursor-pointer"
+              >
+                Karakterim ({protagonist?.name ?? 'Sen'})
+              </button>
+            )}
+            {onOpenInspector && !isExpanded && (
+              <button
+                type="button"
+                onClick={onOpenInspector}
+                className="font-medium text-[#D4A853] hover:text-[#E5BD6E] cursor-pointer"
+              >
+                Seçili Konum Detayını Aç
+              </button>
+            )}
+            <span className="hidden md:inline">Yakınlaştırmak için tekerleği veya +/- tuşlarını kullanın</span>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

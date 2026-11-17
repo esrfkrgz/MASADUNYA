@@ -86,8 +86,30 @@ function includesAny(normText: string, words: string[]): boolean {
   return words.some((w) => normText.includes(normalizeTr(w)));
 }
 
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasWordPrefix(normText: string, prefixes: string[]): boolean {
+  return prefixes.some((p) => {
+    const clean = normalizeTr(p);
+    if (!clean) return false;
+    const re = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(clean)}`);
+    return re.test(normText);
+  });
+}
+
+function hasExactWord(normText: string, words: string[]): boolean {
+  return words.some((w) => {
+    const clean = normalizeTr(w);
+    if (!clean) return false;
+    const re = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(clean)}(?:$|[^a-z0-9])`);
+    return re.test(normText);
+  });
+}
+
 function getPlaceLabel(location: MapLocation | undefined, cell: MazgalCell): string {
-  return location ? location.name : `Mazgal ${cell.id} (${cell.terrainLabel})`;
+  return location ? location.name : cell.terrainLabel;
 }
 
 export function buildContextualChoices(ctx: NarrativeContextInput): NarrativeChoice[] {
@@ -203,8 +225,8 @@ export function buildContextualChoices(ctx: NarrativeContextInput): NarrativeCho
       const nb = currentMazgal.neighbors[0];
       choices.push({
         id: `ch-step-${nb.id}`,
-        label: `${nb.direction} yönüne ilerle (${nb.id})`,
-        actionPrompt: `${nb.direction} yönündeki ${nb.id} karesine doğru ilerliyorum.`,
+        label: `${nb.direction} yönüne doğru ilerle (${nb.terrainLabel})`,
+        actionPrompt: `${nb.direction} yönüne doğru ilerliyorum.`,
         kind: 'travel',
       });
     }
@@ -222,9 +244,53 @@ export function createInitialNarrativeMessages(
   const phase = getDayPhaseLabel(gameTimeMs);
   const weatherDesc = WEATHER_PROSE[activeWeatherKey];
 
+  const isEsrefAwakening =
+    !currentLocation &&
+    currentMazgal.id === 'G4' &&
+    protagonist.activeConditions.includes('Hafıza Kaybı');
+
+  if (isEsrefAwakening) {
+    return [
+      {
+        id: 'nar-init-1',
+        role: 'narrator',
+        speaker: 'Anlatıcı',
+        text: `Sisli Doğu Ormanı'nın derinliklerinde, dev çam ve meşelerin altındaki nemli yosunların üzerinde ${phase.toLowerCase()} vakti ${weatherDesc} içinde gözlerini açıyorsun. Geçmişin, buraya nasıl düştüğün ve kim olduğun zihninde karanlık bir boşluktan ibaret; hatırladığın tek gerçek, adının Eşref olduğu. 18 yaşındaki esmer, 185 cm boyunda ve atletik yapılı bedenin serin orman rüzgarıyla ürperirken ayağa kalkıp çevreni tartıyorsun.`,
+        timestamp: ts,
+        locationLabel: placeLabel,
+        choices: [
+          {
+            id: 'ch-g4-inspect',
+            label: 'Üstünü başını yokla ve izleri incele',
+            actionPrompt: 'Üstümü başımı, ceplerimi ve yosunların üzerindeki izleri dikkatle inceliyorum.',
+            kind: 'observe',
+          },
+          {
+            id: 'ch-g4-climb',
+            label: 'Yüksek bir çama tırmanıp yönünü kestir',
+            actionPrompt: 'Atletik çevikliğimle yüksek bir çam ağacına tırmanıp çevrede duman veya yerleşim arıyorum.',
+            kind: 'observe',
+          },
+          {
+            id: 'ch-g4-south',
+            label: 'Güney yönüne, orman derinliğine doğru yürü',
+            actionPrompt: 'Güney yönüne doğru ormanın içinden ilerliyorum.',
+            kind: 'travel',
+          },
+          {
+            id: 'ch-g4-east',
+            label: 'Doğu yönüne, ağaçların arasından patika ara',
+            actionPrompt: 'Doğu yönüne doğru patika arayarak ilerliyorum.',
+            kind: 'travel',
+          },
+        ],
+      },
+    ];
+  }
+
   const openingLine = currentLocation
     ? `${currentLocation.name} eşiğinde ${phase.toLowerCase()} vakti ${weatherDesc} hakim. ${protagonist.lastObservation}`
-    : `Mazgal ${currentMazgal.id} (${currentMazgal.terrainLabel}) içinde ${phase.toLowerCase()} vakti ${weatherDesc} sürüyor. ${currentMazgal.summary}`;
+    : `${currentMazgal.terrainLabel} boyunca ${phase.toLowerCase()} vakti ${weatherDesc} sürüyor. ${currentMazgal.summary}`;
 
   const messages: NarrativeMessage[] = [
     {
@@ -318,8 +384,11 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
     (u) => u.mazgalId === currentMazgal.id
   );
 
+  const { chosenOption } = input;
+  const forceObserve = chosenOption?.kind === 'observe';
+
   // 1. Önce yer veya hareketli birim hedefleyen doğrudan seyahat niyeti var mı?
-  if (includesAny(norm, ['yola cik', 'git', 'yuru', 'ilerle', 'istikametine'])) {
+  if (!forceObserve && includesAny(norm, ['yola cik', 'git', 'gid', 'yuru', 'ilerle', 'istikametine'])) {
     const namedLoc = allLocations.find(
       (l) => l.id !== currentLocation?.id && norm.includes(normalizeTr(l.name.split(' ')[0]))
     );
@@ -373,26 +442,27 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
 
   // 2. İsimle eşleşen yaşayan NPC veya yerleşim sakiniyle konuşma / flört / yüzleşme
   const matchedContact = contactsHere.find((c) =>
-    norm.includes(normalizeTr(c.name.split(' ')[0]))
+    hasWordPrefix(norm, [c.name.split(' ')[0]])
   );
   const isDialogueIntent =
-    Boolean(matchedContact) ||
-    trimmed.includes('"') ||
-    includesAny(norm, [
-      'konus',
-      'sor',
-      'sohbet',
-      'flort',
-      'bastan',
-      'selam',
-      'fisilda',
-      'ikna',
-      'yuzles',
-      'pazarlik',
-      'soyle',
-      'de ',
-      'seslen',
-    ]);
+    !forceObserve &&
+    (Boolean(matchedContact) ||
+      trimmed.includes('"') ||
+      (hasWordPrefix(norm, ['sor']) && !hasWordPrefix(norm, ['sorun'])) ||
+      hasExactWord(norm, ['de']) ||
+      includesAny(norm, [
+        'konus',
+        'sohbet',
+        'flort',
+        'bastan',
+        'selam',
+        'fisilda',
+        'ikna',
+        'yuzles',
+        'pazarlik',
+        'soyle',
+        'seslen',
+      ]));
 
   if (isDialogueIntent) {
     // Hareketli grup ismi geçiyorsa onunla etkileş
@@ -700,7 +770,12 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
   }
 
   // 6. Avlanma / Çalışma / Toplama
-  if (includesAny(norm, ['avlan', 'av ', 'topla', 'calis', 'kazan', 'odun', 'balik'])) {
+  if (
+    !forceObserve &&
+    (hasExactWord(norm, ['av', 'avi']) ||
+      hasWordPrefix(norm, ['avlan', 'avla']) ||
+      includesAny(norm, ['topla', 'calis', 'kazan', 'odun', 'balik']))
+  ) {
     const nextMs = addGameHours(gameTimeMs, ACTION_HOURS.forage_or_work);
     const outcome = performProtagonistAction(
       protagonist,
@@ -860,8 +935,26 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
     };
   }
 
-  // 8. Gözlem / İnceleme / İz sürme
-  if (includesAny(norm, ['bak', 'gozle', 'incele', 'dinle', 'iz', 'ara', 'kesfet', 'kokla'])) {
+  // 8. Gözlem / İnceleme / İz sürme / Hafıza ve cep yoklama
+  if (
+    forceObserve ||
+    hasWordPrefix(norm, ['iz', 'bak', 'goz', 'ara']) ||
+    includesAny(norm, [
+      'incele',
+      'dinle',
+      'kesfet',
+      'kokla',
+      'yokla',
+      'cep',
+      'ceb',
+      'ustumu',
+      'kiyafet',
+      'hafiza',
+      'kimim',
+      'tirman',
+      'gozetle',
+    ])
+  ) {
     const nextMs = addGameHours(gameTimeMs, ACTION_HOURS.observe);
     const outcome = performProtagonistAction(
       protagonist,
@@ -872,39 +965,93 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
     );
     const roll = rollDie(20);
     const total = roll + mods.perceptionMod;
-    const extraClues: string[] = [];
+    const modLabel =
+      mods.perceptionMod >= 0 ? `+${mods.perceptionMod}` : `${mods.perceptionMod}`;
+    const isSelfInspect = includesAny(norm, [
+      'yokla',
+      'cep',
+      'ceb',
+      'ustumu',
+      'kiyafet',
+      'hafiza',
+      'kimim',
+    ]);
+    const isClimbing = includesAny(norm, ['tirman', 'agac']) && !currentLocation;
+
+    const parts: string[] = [];
+
+    if (isClimbing) {
+      parts.push(
+        `185 cm boyun ve atletik çevikliğinle kalın dallara tutunup yüksek bir çamın tepesine yükseldiğinde (Algı ${roll}${modLabel}=${total}), sisin inceldiği noktalarda güneybatıdaki su parıltısını ve doğu yönündeki yüksek çam sırtlarını seçebiliyorsun.`
+      );
+    } else if (isSelfInspect) {
+      parts.push(
+        `Üstünü başını yokladığında üzerinde koyu renk, dayanıklı ama işaret taşımayan bir yolcu tuniği, belinde dengeli bir kısa kılıç, kesende ${protagonist.silver} gümüş sikke ve çantanda ${protagonist.rations} porsiyon kuru erzak buluyorsun. Kıyafetlerinde ne bir aile arması ne de bir mektup var; zihnin ise yalnızca "Eşref" adını fısıldıyor.`
+      );
+      if (includesAny(norm, ['yosun']) || hasWordPrefix(norm, ['iz'])) {
+        parts.push(
+          total >= 12
+            ? `Çömelip yosunları dikkatle incelediğinde (Algı ${roll}${modLabel}=${total}) çam diplerinden güneye doğru uzanan aceleyle bırakılmış iki çift bot izi ve kırık bir dal parçası fark ediyorsun.`
+            : `Nemli yosunların üzerinde kendi düşüşünden kalan ezik dışında izler çiğ ile silinmiş (Algı ${roll}${modLabel}=${total}).`
+        );
+      }
+    } else {
+      parts.push(outcome.nextProtagonist.lastObservation);
+      if (!currentLocation) {
+        if (total >= 13) {
+          const nearHint =
+            currentMazgal.neighbors[0]
+              ? `${currentMazgal.neighbors[0].direction} yönünde ${currentMazgal.neighbors[0].terrainLabel.toLowerCase()} başlıyor.`
+              : '';
+          parts.push(
+            `Keskin gözlemin (Algı ${roll}${modLabel}=${total}) sisin içindeki detayları yakalıyor: çevrede ${currentMazgal.resourceYield.toLowerCase()} izleri var. ${nearHint}`.trim()
+          );
+        } else {
+          parts.push(
+            `Dikkatle kulak kabartsan da (Algı ${roll}${modLabel}=${total}) yoğun doğu sisi rüzgar dışındaki sesleri boğuyor.`
+          );
+        }
+      }
+    }
+
     if (unitsHere.length > 0) {
-      extraClues.push(
+      parts.push(
         `Yakında ${unitsHere.map((u) => `${u.name} (${u.statusNote})`).join(' ve ')} hareket halinde.`
       );
     }
     if (total >= 13 && living && living.rumors.length > 0) {
-      extraClues.push(`Dikkatli kulak kabartman sana şu söylentiyi yakalattı: "${living.rumors[0]}"`);
+      parts.push(`Dikkatli kulak kabartman sana şu söylentiyi yakalattı: "${living.rumors[0]}"`);
     } else if (total >= 12 && currentMazgal.neighborEffects.length > 0) {
-      extraClues.push(currentMazgal.neighborEffects[0]);
+      parts.push(currentMazgal.neighborEffects[0]);
     }
     if (protagonist.activeWorldWave) {
-      extraClues.push(
+      parts.push(
         `Bölge genelinde "${protagonist.activeWorldWave.title}" etkisi hissediliyor.`
       );
     }
+
+    const finalObservationText = parts.join(' ');
+    const updatedProtag: ProtagonistState = {
+      ...outcome.nextProtagonist,
+      lastObservation: finalObservationText,
+    };
 
     const msg: NarrativeMessage = {
       id: makeMsgId('nar'),
       role: 'narrator',
       speaker: 'Anlatıcı',
-      text: [outcome.nextProtagonist.lastObservation, ...extraClues].join(' '),
+      text: finalObservationText,
       timestamp: formatGameDateTime(nextMs),
       locationLabel: currentPlace,
       choices: buildContextualChoices({
         ...input,
-        protagonist: outcome.nextProtagonist,
+        protagonist: updatedProtag,
         gameTimeMs: nextMs,
       }),
     };
     return {
       appendedMessages: [playerMsg, msg],
-      nextProtagonist: outcome.nextProtagonist,
+      nextProtagonist: updatedProtag,
       hoursSpent: ACTION_HOURS.observe,
       locationMoraleDelta: outcome.locationMoraleDelta,
       locationNoteTitle: 'Çevre Gözlemi',
@@ -919,7 +1066,7 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
   const weatherDesc = WEATHER_PROSE[activeWeatherKey];
   const atmosphere = currentLocation
     ? `${currentLocation.name} (${living?.mood ?? 'Temkinli'} hava) içinde ${weatherDesc} sürerken eylemin çevredeki bakışların kısa süreliğine sana çevrilmesine yol açtı.`
-    : `Mazgal ${currentMazgal.id} (${currentMazgal.terrainLabel}) içinde ${weatherDesc} altında attığın her adım çiğnememiş toprak ve dallar arasında yankılanıyor.`;
+    : `${currentMazgal.terrainLabel} içinde ${weatherDesc} altında attığın her adım çiğnememiş toprak ve dallar arasında yankılanıyor.`;
   const companionNote = companion
     ? ` Yanındaki ${companion.name} başını kaldırıp durumunu tartıyor: "${companion.lastReaction}"`
     : '';

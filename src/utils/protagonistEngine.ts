@@ -171,6 +171,12 @@ export function getProtagonistModifiers(
     notes.push(`Aktif yaralar fiziksel testleri zorlaştırıyor (-1 Fiziksel: ${injuries.join(', ')}).`);
   }
 
+  if ((protagonist.marks ?? []).includes('Doğuştan Karizma')) {
+    physicalMod += 1;
+    socialMod += 1;
+    notes.push('185 cm atletik yapın ve doğal karizman etkileşimlerde avantaj sağlıyor (+1 Fiziksel, +1 Sosyal).');
+  }
+
   if (notes.length === 0) {
     notes.push('Durumun dengeli; çevreye olağan dikkatle uyum sağlıyorsun.');
   }
@@ -217,46 +223,45 @@ function updateConditions(
 }
 
 export function createInitialProtagonist(locations: MapLocation[]): ProtagonistState {
-  const startLoc = locations.find((l) => l.id === 'loc-kuldere') ?? locations[0];
-  const cell = startLoc ? getCellForCoords(startLoc.x, startLoc.y) : { id: 'B5' };
   const ts = formatGameDateTime(INITIAL_GAME_TIME_MS);
   const initialContacts = createInitialContacts(locations);
 
   return {
-    name: 'Gezgin İzci',
-    title: 'Doğu Sınırı Yolcusu',
-    locationId: startLoc?.id ?? 'loc-kuldere',
-    mazgalId: cell.id,
-    x: startLoc?.x ?? 11.2,
-    y: startLoc?.y ?? 55.2,
-    health: 100,
-    stamina: 95,
-    hunger: 15,
-    rations: 10,
-    silver: 24,
-    mood: 'Dinç',
+    name: 'Eşref',
+    title: 'Hafızasını Yitirmiş 18 Yaşında Esmer Genç',
+    appearanceNote:
+      '18 yaşında, 185 cm boyunda, esmer tenli, atletik yapılı ve karizmatik bir genç. Hafıza kaybı nedeniyle geçmişine dair hiçbir şey bilmiyor; yalnızca adının Eşref olduğunu hatırlıyor.',
+    locationId: null,
+    mazgalId: 'G4',
+    x: 40.6,
+    y: 38.9,
+    health: 92,
+    stamina: 82,
+    hunger: 25,
+    rations: 3,
+    silver: 6,
+    mood: 'Temkinli',
     reputation: {
-      border_human: 12,
+      border_human: 0,
       elf: 0,
-      beastkin: 4,
-      outlaws: -5,
-      goblinoids: -20,
+      beastkin: 0,
+      outlaws: 0,
+      goblinoids: -15,
     },
-    activeConditions: ['Güvenli Çevre'],
-    marks: ['Külköy Sınır Geçiş Belgesi'],
+    activeConditions: ['Hafıza Kaybı', 'Orman Sisi'],
+    marks: ['185 cm · Esmer · Atletik', 'Doğuştan Karizma'],
     lastObservation:
-      'Külköy Sınır Kalesi avlusunda sabah sisi dağılıyor. Palizad surlarının ardında uzanan büyük orman soğuk rüzgarla uğulduyor.',
-    lastDialogue:
-      'Hancı Torin: "Doğuya çıkacaksan kalın pelerinini ve kuru erzağını eksik etme; Gümüş Köprü’den ötesi tekin değil."',
+      'Soğuk çam iğneleri ve nemli orman yosunlarının üzerinde gözlerini açtın. Geçmişine dair zihnin bembeyaz bir sis perdesinin ardında; hatırladığın tek şey adının Eşref olduğu. 18 yaşındasın, 185 cm boyundaki esmer ve atletik bedenin serin orman havasında diri.',
+    lastDialogue: '',
     journal: [
       {
         id: 'pj-init',
         timestamp: ts,
         kind: 'Durum',
-        locationLabel: startLoc?.name ?? 'Külköy Sınır Kalesi',
-        title: 'Doğu Sınırında İlk Adım',
+        locationLabel: 'Sisli Çam ve Meşe Ormanı',
+        title: 'Sisler İçinde Uyanış',
         detail:
-          'Külköy Sınır Kalesi’nde sefer hazırlıklarını tamamladın. Her adımın ve seçimin hem seni hem çevreni etkileyecek.',
+          'Hafıza kaybı içinde, yalnızca adının Eşref olduğunu hatırlayarak soğuk çam ve meşe ormanında uyandın.',
       },
     ],
     lastUpdatedMs: INITIAL_GAME_TIME_MS,
@@ -283,6 +288,11 @@ export function hydrateProtagonist(
   locations: MapLocation[]
 ): ProtagonistState {
   const baseFields = {
+    appearanceNote:
+      protagonist.appearanceNote ??
+      (protagonist.name === 'Eşref'
+        ? '18 yaşında, 185 cm boyunda, esmer tenli, atletik yapılı ve karizmatik bir genç. Yalnızca adının Eşref olduğunu hatırlıyor.'
+        : undefined),
     playerMorality: protagonist.playerMorality ?? 10,
     bountySilver: protagonist.bountySilver ?? 0,
     bountyFactions: protagonist.bountyFactions ?? [],
@@ -401,7 +411,7 @@ export function buildContextualObservation(
       protagonist.stamina <= 35
         ? ' Adımların ağırlaştı; kısa bir mola vermezsen dikkatin dağılacak.'
         : '';
-    return `${phase} vaktinde Mazgal ${cell.id} (${cell.terrainLabel}) içindesin. Görüş ${cell.visibilityMeters} metre. ${terrainNote}${staminaNote}`;
+    return `${phase} vaktinde ${cell.terrainLabel.toLowerCase()} içinde çevreni süzüyorsun. Görüş yaklaşık ${cell.visibilityMeters} metre. ${terrainNote}${staminaNote}`;
   }
 
   const ls = location.livingState;
@@ -422,7 +432,7 @@ export function buildContextualObservation(
       ? ' Yaralı halin çevredeki gözcülerin dikkatinden kaçmıyor.'
       : '';
 
-  return `${phase} vaktinde ${location.name} (Mazgal ${cell.id}) noktasındasın. ${moodDesc}${problemLine}${woundLine}`;
+  return `${phase} vaktinde ${location.name} sınırları içindesin. ${moodDesc}${problemLine}${woundLine}`;
 }
 
 export function buildContextualDialogue(
@@ -433,7 +443,7 @@ export function buildContextualDialogue(
   if (!location) {
     return {
       speaker: 'Kendi Kendine Not',
-      line: `Mazgal ${cell.id} (${cell.terrainLabel}) içinde konuşacak kimse yok. Çevredeki izler: ${cell.resourceYield}.`,
+      line: `${cell.terrainLabel} boyunca sesine karşılık verecek kimse yok. Çevrede seçilen izler: ${cell.resourceYield}.`,
       repDelta: 0,
     };
   }
@@ -735,8 +745,8 @@ export function performProtagonistAction(
       detail = `Çevrede 4 saatlik devriye ve onarım desteği verdin. Bölge morali (+5) ve yerel itibarın (+6) yükseldi.`;
       locationEventNote = `${protagonist.name} bölge çevresini devriye gezerek güvenliği artırdı.`;
     } else {
-      title = `Mazgal ${currentCell.id} Keşif ve İşaretleme`;
-      detail = `Mazgalın güvenli geçiş noktalarını haritana işaretledin.`;
+      title = `${currentCell.terrainLabel} Keşif ve İşaretleme`;
+      detail = `Bölgedeki güvenli geçiş noktalarını ve izleri belleğine kazıdın.`;
     }
     lastObservation = detail;
   } else if (actionType === 'rest_camp') {
@@ -886,7 +896,7 @@ export function applyMazgalEventToProtagonist(
     health = Math.max(12, health - dmg);
     stamina = Math.max(5, stamina - 10);
     localMoraleDelta = insideLoc ? -2 : 0;
-    detail = `Mazgal ${cell.id} alanında "${eventTitle}" tehlikesiyle karşılaştın (-${dmg} Can, -16 Zindelik). ${outcomeNote}`;
+    detail = `${cell.terrainLabel} içinde "${eventTitle}" tehlikesiyle karşılaştın (-${dmg} Can, -16 Zindelik). ${outcomeNote}`;
   } else if (eventKind === 'İz ve Keşif') {
     const gainedSilver = Math.random() < 0.45 ? rollDie(4) : 0;
     const gainedRation = Math.random() < 0.55 ? 1 : 0;
@@ -898,7 +908,7 @@ export function applyMazgalEventToProtagonist(
     ]
       .filter(Boolean)
       .join(', ');
-    detail = `Mazgal ${cell.id} keşfinde "${eventTitle}" kaydını inceledin${lootSummary ? ` (${lootSummary})` : ''}. ${outcomeNote}`;
+    detail = `${cell.terrainLabel} keşfinde "${eventTitle}" izini inceledin${lootSummary ? ` (${lootSummary})` : ''}. ${outcomeNote}`;
   } else if (eventKind === 'Karşılaşma') {
     if (insideLoc) {
       const faction = getFactionForLocation(insideLoc);
@@ -907,10 +917,10 @@ export function applyMazgalEventToProtagonist(
     } else {
       rations += 1;
     }
-    detail = `Mazgal ${cell.id} yolunda "${eventTitle}" karşılaşmasını yaşadın. ${outcomeNote}`;
+    detail = `${cell.terrainLabel} yolunda "${eventTitle}" karşılaşmasını yaşadın. ${outcomeNote}`;
   } else {
     stamina = Math.max(5, stamina - 5);
-    detail = `Mazgal ${cell.id} arazi/hava koşulu ("${eventTitle}") seni yavaşlattı. ${outcomeNote}`;
+    detail = `${cell.terrainLabel} arazi ve hava koşulu ("${eventTitle}") seni yavaşlattı. ${outcomeNote}`;
   }
 
   const mood = computeProtagonistMood(health, stamina, hunger, cell.safetyScore);

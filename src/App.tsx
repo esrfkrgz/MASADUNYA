@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, Clock, RotateCcw, User } from 'lucide-react';
 import { ChronicleAtlas } from './components/ChronicleAtlas';
 import { EncounterStudio } from './components/EncounterStudio';
@@ -13,6 +13,10 @@ import { LocationModal } from './components/LocationModal';
 import { MapViewport } from './components/MapViewport';
 import { MazgalInspector } from './components/MazgalInspector';
 import { NarrativeChatbox } from './components/NarrativeChatbox';
+import {
+  NARRATIVE_MODEL_OPTIONS,
+  NarrativeSettingsModal,
+} from './components/NarrativeSettingsModal';
 import { ProtagonistDrawer } from './components/ProtagonistDrawer';
 import { TopBar } from './components/TopBar';
 import { INITIAL_LOCATIONS, INITIAL_ROUTES, REGION_INFO } from './data/easternForestData';
@@ -26,6 +30,7 @@ import type {
   MapRoute,
   MazgalCell,
   MazgalNeighborSummary,
+  NarrativeAiSettings,
   NarrativeChoice,
   NarrativeMessage,
   ProtagonistActionType,
@@ -87,8 +92,8 @@ import {
 import {
   createInitialNarrativeMessages,
   createTravelNarrativeNotice,
-  resolveNarrativeTurn,
 } from './utils/narrativeEngine';
+import { runAiNarrativeTurn } from './utils/narrativeTools';
 import { soundFx } from './utils/sound';
 import {
   type EncounterChoiceId,
@@ -115,7 +120,7 @@ import {
   useInventoryItem,
 } from './utils/worldSystemsEngine';
 
-const STORAGE_KEY = 'sisli_dogu_atlasi_v4';
+const STORAGE_KEY = 'sisli_dogu_atlasi_v6';
 
 interface PersistedState {
   locations: MapLocation[];
@@ -126,7 +131,13 @@ interface PersistedState {
   protagonist?: ProtagonistState;
   activeWeatherKey?: WeatherConditionKey;
   narrativeMessages?: NarrativeMessage[];
+  aiSettings?: NarrativeAiSettings;
 }
+
+const DEFAULT_AI_SETTINGS: NarrativeAiSettings = {
+  model: 'gemini-4-hydrogen',
+  thinkingMode: 'fast',
+};
 
 function loadInitialState(): PersistedState {
   try {
@@ -173,16 +184,16 @@ function loadInitialState(): PersistedState {
   return {
     locations: INITIAL_LOCATIONS,
     routes: INITIAL_ROUTES,
-    partyLocationId: 'loc-kuldere',
+    partyLocationId: '',
     gameTimeMs: INITIAL_GAME_TIME_MS,
     protagonist: createInitialProtagonist(INITIAL_LOCATIONS),
     journeyLog: [
       {
         id: 'log-init',
-        locationId: 'loc-kuldere',
-        locationName: 'Külköy Sınır Kalesi',
+        locationId: 'loc-gumus-kopru',
+        locationName: 'Mazgal G4 (Sisli Çam ve Meşe Ormanı)',
         timestamp: formatGameDateTime(INITIAL_GAME_TIME_MS),
-        note: 'Külköy Sınır Kalesi eşiğinde sefer hazırlıklarını tamamladın.',
+        note: 'Hafıza kaybı içinde yalnızca adının Eşref olduğunu hatırlayarak G4 mazgalındaki ormanda uyandın.',
       },
     ],
   };
@@ -206,7 +217,9 @@ export default function App() {
   const [lastTimeAction, setLastTimeAction] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('map');
-  const [selectedLocationId, setSelectedLocationId] = useState<string>(initial.partyLocationId);
+  const [selectedLocationId, setSelectedLocationId] = useState<string>(
+    initial.partyLocationId || 'loc-gumus-kopru'
+  );
 
   const [fogOfWar, setFogOfWar] = useState<boolean>(false);
   const [activeWeatherKey, setActiveWeatherKey] = useState<WeatherConditionKey>(
@@ -221,9 +234,23 @@ export default function App() {
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(false);
   const [drawerMode, setDrawerMode] = useState<'location' | 'mazgal' | 'protagonist'>('location');
   const [protagonistTab, setProtagonistTab] = useState<'status' | 'bag' | 'party' | 'relations' | 'moments'>('status');
-  const [selectedMazgalId, setSelectedMazgalId] = useState<string>('B5');
+  const [selectedMazgalId, setSelectedMazgalId] = useState<string>(
+    initial.protagonist?.mazgalId ?? 'G4'
+  );
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   const [resetKey, setResetKey] = useState<number>(0);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [narrativePending, setNarrativePending] = useState<boolean>(false);
+  const [narrativeError, setNarrativeError] = useState<string | null>(null);
+  const [failedNarrativeAttempt, setFailedNarrativeAttempt] = useState<{
+    text: string;
+    choice?: NarrativeChoice;
+  } | null>(null);
+  const [narrativeSettingsOpen, setNarrativeSettingsOpen] = useState<boolean>(false);
+  const [aiSettings, setAiSettings] = useState<NarrativeAiSettings>(
+    initial.aiSettings ?? DEFAULT_AI_SETTINGS
+  );
+  const playArenaRef = useRef<HTMLDivElement>(null);
 
   const mazgalCells = useMemo(
     () => buildMazgalGrid(locations, activeWeatherKey, protagonist.activeWorldWave ?? null),
@@ -269,6 +296,7 @@ export default function App() {
         protagonist,
         activeWeatherKey,
         narrativeMessages: narrativeMessages.slice(-80),
+        aiSettings,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -283,11 +311,22 @@ export default function App() {
     protagonist,
     activeWeatherKey,
     narrativeMessages,
+    aiSettings,
   ]);
 
   useEffect(() => {
     soundFx.enabled = soundEnabled;
   }, [soundEnabled]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -301,6 +340,20 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  const handleToggleFullscreen = async () => {
+    const next = !isFullscreen;
+    setIsFullscreen(next);
+    try {
+      if (next && playArenaRef.current?.requestFullscreen) {
+        await playArenaRef.current.requestFullscreen();
+      } else if (!next && document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch {
+      // Fallback to in-page fixed 100vh fullscreen layout when Fullscreen API is blocked
+    }
+  };
 
   const selectedLocation = locations.find((l) => l.id === selectedLocationId) ?? locations[0];
   const selectedMazgal = mazgalCells.find((c) => c.id === selectedMazgalId) ?? mazgalCells[0];
@@ -1386,102 +1439,67 @@ export default function App() {
     ]);
   };
 
-  const handleSubmitNarrativeTurn = (rawText: string, chosenOption?: NarrativeChoice) => {
+  const handleSubmitNarrativeTurn = async (
+    rawText: string,
+    chosenOption?: NarrativeChoice
+  ): Promise<boolean> => {
+    if (narrativePending) return false;
     soundFx.playSelectChime();
-    const res = resolveNarrativeTurn({
-      rawText,
-      chosenOption,
-      protagonist,
-      currentLocation: protagonistCurrentLoc,
-      currentMazgal: protagonistCurrentCell,
-      allLocations: locations,
-      routes,
-      activeWeatherKey,
-      gameTimeMs,
-    });
+    setNarrativeError(null);
+    setNarrativePending(true);
 
-    if (res.travelToLocationId) {
-      setNarrativeMessages((prev) => [...prev.slice(-78), ...res.appendedMessages]);
-      handleMoveParty(res.travelToLocationId);
-      return;
-    }
-
-    if (res.travelToMazgal) {
-      setNarrativeMessages((prev) => [...prev.slice(-78), ...res.appendedMessages]);
-      handleStepMazgal(protagonist.mazgalId, res.travelToMazgal);
-      return;
-    }
-
-    let finalProtag = res.nextProtagonist;
-    let targetMs = gameTimeMs;
-    let roamingArrivals: RoamingArrivalEvent[] = [];
-
-    if (res.hoursSpent > 0) {
-      targetMs = addGameHours(gameTimeMs, res.hoursSpent);
-      setGameTimeMs(targetMs);
-      const tick = processWorldTick(
-        res.nextProtagonist,
+    try {
+      const res = await runAiNarrativeTurn({
+        rawText,
+        chosenOption,
+        protagonist,
+        locations,
+        mazgalCells,
+        routes,
+        activeWeatherKey,
         gameTimeMs,
-        targetMs,
-        protagonistCurrentLoc,
-        protagonistCurrentCell
-      );
-      finalProtag = tick.finalProtag;
-      roamingArrivals = tick.roamingArrivals;
-      setLastTimeAction(
-        tick.notices.length > 0
-          ? `Anlatı Eylemi (+${formatTravelHours(res.hoursSpent)}) · ${tick.notices[0]}`
-          : `Anlatı Eylemi (+${formatTravelHours(res.hoursSpent)})`
-      );
-    }
-
-    setProtagonist(finalProtag);
-
-    if (
-      res.hoursSpent > 0 ||
-      res.locationMoraleDelta !== 0 ||
-      res.solvedProblemId ||
-      res.attemptedProblemId
-    ) {
-      setLocations((prev) => {
-        const updated = prev.map((loc) => {
-          if (loc.id !== protagonistCurrentLoc?.id) return loc;
-          let nextLoc = loc;
-          if (res.solvedProblemId) {
-            nextLoc = resolveSettlementProblemByParty(nextLoc, res.solvedProblemId, targetMs);
-          } else if (res.attemptedProblemId && nextLoc.livingState) {
-            nextLoc = {
-              ...nextLoc,
-              livingState: {
-                ...nextLoc.livingState,
-                activeProblems: nextLoc.livingState.activeProblems.map((p) =>
-                  p.id === res.attemptedProblemId ? { ...p, attempts: p.attempts + 1 } : p
-                ),
-              },
-            };
-          }
-          if (res.locationMoraleDelta !== 0 || res.locationNoteDetail) {
-            nextLoc = applyExternalMoraleShift(
-              nextLoc,
-              res.locationMoraleDelta,
-              targetMs,
-              res.locationNoteTitle,
-              res.locationNoteDetail
-            );
-          }
-          return nextLoc;
-        });
-        return res.hoursSpent > 0
-          ? applyLocationsTick(updated, gameTimeMs, targetMs, finalProtag, roamingArrivals)
-          : updated;
+        partyLocationId,
+        recentMessages: narrativeMessages,
+        aiSettings,
       });
-    }
 
-    setNarrativeMessages((prev) => [...prev.slice(-76), ...res.appendedMessages]);
+      if (res.movedThisTurn) {
+        soundFx.playMoveToken();
+      } else if (res.rolledDiceThisTurn) {
+        soundFx.playDiceRoll();
+      }
+
+      setProtagonist(res.nextProtagonist);
+      setLocations(res.nextLocations);
+      setActiveWeatherKey(res.nextWeatherKey);
+      setGameTimeMs(res.nextGameTimeMs);
+      setPartyLocationId(res.nextPartyLocationId);
+      if (res.lastTimeAction) {
+        setLastTimeAction(res.lastTimeAction);
+      }
+      if (res.journeyEntries.length > 0) {
+        setJourneyLog((prev) => [...res.journeyEntries, ...prev]);
+      }
+      setNarrativeMessages((prev) => [...prev.slice(-76), ...res.appendedMessages]);
+      setFailedNarrativeAttempt(null);
+      return true;
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Yapay zeka anlatıcısı şu an yanıt veremiyor.';
+      setFailedNarrativeAttempt({ text: rawText, choice: chosenOption });
+      setNarrativeError(msg);
+      return false;
+    } finally {
+      setNarrativePending(false);
+    }
   };
 
   const handleResetNarrative = () => {
     soundFx.playSelectChime();
+    setNarrativeError(null);
+    setFailedNarrativeAttempt(null);
     setNarrativeMessages(
       createInitialNarrativeMessages({
         protagonist,
@@ -1590,14 +1608,14 @@ export default function App() {
     localStorage.removeItem(STORAGE_KEY);
     setLocations(INITIAL_LOCATIONS);
     setRoutes(INITIAL_ROUTES);
-    setPartyLocationId('loc-kuldere');
+    setPartyLocationId('');
     const freshProtag = createInitialProtagonist(INITIAL_LOCATIONS);
     const freshCells = buildMazgalGrid(INITIAL_LOCATIONS, 'mist', null);
     const startLoc = INITIAL_LOCATIONS.find((l) => l.id === freshProtag.locationId);
     const startCell = freshCells.find((c) => c.id === freshProtag.mazgalId) ?? freshCells[0];
     setProtagonist(freshProtag);
-    setSelectedLocationId('loc-kuldere');
-    setSelectedMazgalId('B5');
+    setSelectedLocationId('loc-gumus-kopru');
+    setSelectedMazgalId('G4');
     setDrawerMode('location');
     setInspectorOpen(false);
     setFogOfWar(false);
@@ -1607,16 +1625,16 @@ export default function App() {
     setPendingCoords(null);
     setEditingLocation(null);
     setGameTimeMs(INITIAL_GAME_TIME_MS);
-    setLastTimeAction('Başlangıç noktasına dönüldü (06.06.2026 · 08:00)');
+    setLastTimeAction('Başlangıca dönüldü: Eşref · Mazgal G4 (06.06.2026 · 08:00)');
     setConfirmReset(false);
     setResetKey((k) => k + 1);
     setJourneyLog([
       {
         id: 'log-reset',
-        locationId: 'loc-kuldere',
-        locationName: 'Külköy Sınır Kalesi',
+        locationId: 'loc-gumus-kopru',
+        locationName: 'Mazgal G4 (Sisli Çam ve Meşe Ormanı)',
         timestamp: formatGameDateTime(INITIAL_GAME_TIME_MS),
-        note: 'Külköy Sınır Kalesi eşiğinde sefer hazırlıklarını tamamladın.',
+        note: 'Hafıza kaybı içinde yalnızca adının Eşref olduğunu hatırlayarak G4 mazgalındaki ormanda uyandın.',
       },
     ]);
     setNarrativeMessages(
@@ -1810,8 +1828,70 @@ export default function App() {
               </p>
             </div>
 
-            {/* Full-Width Map Canvas & Narrative Chatbox Below */}
-            <div className="flex flex-col gap-5">
+            {/* Full-Width Map Canvas & Narrative Chatbox Below (Single-Screen Arena in Fullscreen) */}
+            <div
+              ref={playArenaRef}
+              className={
+                isFullscreen
+                  ? 'fixed inset-0 z-50 flex h-screen flex-col gap-2 overflow-hidden bg-[#080E0C] p-2.5 sm:p-3'
+                  : 'flex flex-col gap-5'
+              }
+            >
+              {isFullscreen && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#D4A853]/18 bg-[#101A16] px-3 py-1.5 text-xs shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 tabular-nums">
+                    <span className="font-mono font-semibold text-[#F8F3E6]">
+                      {formatGameDate(gameTimeMs)}
+                    </span>
+                    <span aria-hidden="true" className="text-[#56665F]">·</span>
+                    <span className="font-mono font-semibold text-[#D4A853]">
+                      {formatGameHour(gameTimeMs)}
+                    </span>
+                    <span aria-hidden="true" className="text-[#56665F]">·</span>
+                    <span className="text-[#B7C4BE]">
+                      {currentDay}. Gün ({currentPhase})
+                    </span>
+                    <span aria-hidden="true" className="hidden md:inline text-[#56665F]">·</span>
+                    <span className="hidden md:inline text-[#9CE3DD]">
+                      {protagonist.name} · Can {protagonist.health} · Gümüş {protagonist.silver}g
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenProtagonist('status')}
+                      className="rounded border border-[#67C7C0]/35 bg-[#13231F] px-2 py-0.5 text-[11px] font-medium text-[#9CE3DD] hover:border-[#67C7C0]/70 cursor-pointer whitespace-nowrap"
+                    >
+                      Karakterim
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenProtagonist('bag')}
+                      className="rounded border border-[#D4A853]/28 bg-[#1A241F] px-2 py-0.5 text-[11px] font-medium text-[#E8C472] hover:border-[#D4A853]/65 cursor-pointer whitespace-nowrap"
+                    >
+                      Çanta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenProtagonist('party')}
+                      className="rounded border border-[#D4A853]/28 bg-[#1A241F] px-2 py-0.5 text-[11px] font-medium text-[#E8C472] hover:border-[#D4A853]/65 cursor-pointer whitespace-nowrap"
+                    >
+                      Parti &amp; İlişkiler
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrawerMode('location');
+                        setInspectorOpen(true);
+                      }}
+                      className="rounded border border-[#D4A853]/28 bg-[#1A241F] px-2 py-0.5 text-[11px] font-medium text-[#EDE6D6] hover:border-[#D4A853]/65 cursor-pointer whitespace-nowrap"
+                    >
+                      Konum Detayı
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <MapViewport
                 locations={locations}
                 routes={routes}
@@ -1826,6 +1906,8 @@ export default function App() {
                 soundEnabled={soundEnabled}
                 isPlacingPin={isPlacingPin}
                 resetKey={resetKey}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={handleToggleFullscreen}
                 onSelectLocation={handleSelectLocation}
                 onSelectMazgal={handleSelectMazgal}
                 onPlacePinAt={handlePlacePinAt}
@@ -1844,25 +1926,47 @@ export default function App() {
               <NarrativeChatbox
                 messages={narrativeMessages}
                 protagonistName={protagonist.name}
+                activeModelName={
+                  NARRATIVE_MODEL_OPTIONS.find((m) => m.id === aiSettings.model)?.name
+                }
+                isFullscreen={isFullscreen}
+                isPending={narrativePending}
+                errorMessage={narrativeError}
+                failedAttempt={failedNarrativeAttempt}
                 currentPlaceLabel={
                   protagonistCurrentLoc
-                    ? `${protagonistCurrentLoc.name} · Mazgal ${protagonistCurrentCell.id}`
-                    : `Mazgal ${protagonistCurrentCell.id} (${protagonistCurrentCell.terrainLabel})`
+                    ? protagonistCurrentLoc.name
+                    : protagonistCurrentCell.terrainLabel
                 }
                 onSubmitAction={handleSubmitNarrativeTurn}
+                onRetryFailedAction={() =>
+                  failedNarrativeAttempt
+                    ? handleSubmitNarrativeTurn(
+                        failedNarrativeAttempt.text,
+                        failedNarrativeAttempt.choice
+                      )
+                    : false
+                }
                 onResetNarrative={handleResetNarrative}
+                onOpenSettings={() => setNarrativeSettingsOpen(true)}
               />
-            </div>
 
-            {/* Slide-Over Inspector Drawer (Location, Mazgal, or Protagonist) */}
-            {inspectorOpen && (
-              <div className="fixed inset-0 z-40 flex justify-end">
-                <div
-                  aria-hidden="true"
-                  onClick={() => setInspectorOpen(false)}
-                  className="fixed inset-0 bg-black/55 backdrop-blur-[1px]"
-                />
-                <div className="relative z-10 h-full w-full max-w-[440px] overflow-y-auto border-l border-[#D4A853]/25 bg-[#141F1B] p-4 shadow-2xl">
+              <NarrativeSettingsModal
+                isOpen={narrativeSettingsOpen}
+                settings={aiSettings}
+                onChange={setAiSettings}
+                onClose={() => setNarrativeSettingsOpen(false)}
+              />
+
+              {/* Slide-Over Inspector Drawer (stays reachable even in native fullscreen) */}
+              {inspectorOpen && (
+                <div className="fixed inset-0 z-[60] flex justify-end">
+                  <div
+                    aria-hidden="true"
+                    onClick={() => setInspectorOpen(false)}
+                    className="fixed inset-0 bg-black/55 backdrop-blur-[1px]"
+                  />
+                  <div className="relative z-10 h-full w-full max-w-[440px] overflow-y-auto border-l border-[#D4A853]/25 bg-[#141F1B] p-4 shadow-2xl">
                   {drawerMode === 'protagonist' ? (
                     <ProtagonistDrawer
                       key={protagonistTab}
@@ -1944,9 +2048,10 @@ export default function App() {
                       onClose={() => setInspectorOpen(false)}
                     />
                   )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 

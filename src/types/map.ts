@@ -406,6 +406,7 @@ export interface WorldRoamingUnit {
 export interface ProtagonistState {
   name: string;
   title: string;
+  appearanceNote?: string;
   locationId: string | null; // null if standing on open mazgal terrain between locations
   mazgalId: string;
   x: number;
@@ -461,4 +462,15 @@ export interface NarrativeMessage {
   choices?: NarrativeChoice[];
 }
 
+export type NarrativeAiModelId =
+  | 'gemini-4-hydrogen'
+  | 'gemini-3.1-flash-lite'
+  | 'gemini-4-argon'
+  | 'gemini-4-carbon';
 
+export type NarrativeThinkingMode = 'fast' | 'balanced' | 'deep';
+
+export interface NarrativeAiSettings {
+  model: NarrativeAiModelId;
+  thinkingMode: NarrativeThinkingMode;
+}
