@@ -4,7 +4,24 @@ import tileMountainImg from '../assets/images/tile_mountain_1794845555773.jpg';
 import tilePlainImg from '../assets/images/tile_plain_1794845556011.jpg';
 import tileRiverImg from '../assets/images/tile_river_1794845556008.jpg';
 import tileRoadImg from '../assets/images/tile_road_1794845555536.jpg';
-import type { MapLocation, MazgalCell, MazgalTerrain } from '../types/map';
+import type { FactionKey, MapLocation, MazgalCell, MazgalTerrain, WorldWave } from '../types/map';
+import type { WeatherConditionKey } from './campaignCalculators';
+
+function getGridLocationFaction(loc: MapLocation): FactionKey {
+  switch (loc.livingState?.archetype) {
+    case 'elf_canopy':
+      return 'elf';
+    case 'beastkin_clan':
+      return 'beastkin';
+    case 'goblin_burrow':
+      return 'goblinoids';
+    case 'bandit_hamlet':
+    case 'smuggler_cove':
+      return 'outlaws';
+    default:
+      return 'border_human';
+  }
+}
 
 export const GRID_COLS = 16;
 export const GRID_ROWS = 9;
@@ -310,7 +327,11 @@ function computeNeighborTransition(
   };
 }
 
-export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
+export function buildMazgalGrid(
+  locations: MapLocation[],
+  activeWeather: WeatherConditionKey = 'mist',
+  activeWorldWave: WorldWave | null = null
+): MazgalCell[] {
   // Pre-index locations by cell id
   const locMap = new Map<string, MapLocation[]>();
   for (const loc of locations) {
@@ -319,6 +340,18 @@ export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
     list.push(loc);
     locMap.set(id, list);
   }
+
+  const waveMistBonus = activeWorldWave?.kind === 'Sis Fırtınası' ? 0.85 : 1;
+  const weatherVisFactor =
+    (activeWeather === 'storm'
+      ? 0.62
+      : activeWeather === 'rain'
+      ? 0.78
+      : activeWeather === 'mist'
+      ? 0.88
+      : 1.05) * waveMistBonus;
+  const weatherSafetyShift =
+    activeWeather === 'storm' ? -8 : activeWeather === 'rain' ? -4 : 0;
 
   // First pass: calculate raw safety score and neighbor effects for all 144 cells
   const rawCells: MazgalCell[] = [];
@@ -330,11 +363,11 @@ export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
       const profile = TERRAIN_PROFILES[terrain];
       const inside = locMap.get(id) ?? [];
 
-      let safety = profile.baseSafety;
-      let visibility = profile.visibility;
+      let safety = profile.baseSafety + weatherSafetyShift;
+      let visibility = Math.round(profile.visibility * weatherVisFactor);
       const effects: string[] = [];
 
-      // Check locations inside this cell
+      // Check locations inside this cell (static role + livingState)
       for (const loc of inside) {
         if (loc.id === 'loc-kuldere') {
           safety += 32;
@@ -349,11 +382,30 @@ export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
           safety -= 20;
           effects.push(`${loc.name} bu mazgalda yer alıyor; eşkıya ve yağmacı riski yüksek (-20 Güvenlik).`);
         }
+
+        const ls = loc.livingState;
+        if (ls) {
+          if (ls.activeProblems.length > 0) {
+            const probPenalty = ls.activeProblems.length * 5;
+            safety -= probPenalty;
+            effects.push(
+              `${loc.name} içinde süren "${ls.activeProblems[0].title}" sorunu yerel güvenliği düşürüyor (-${probPenalty} Güvenlik).`
+            );
+          }
+          if (ls.morale >= 80) {
+            safety += 5;
+            effects.push(`${loc.name} yüksek moralli ve düzenli; gönüllü gözcüler yolu kolluyor (+5 Güvenlik).`);
+          } else if (ls.morale <= 35) {
+            safety -= 6;
+            effects.push(`${loc.name} halkı ${ls.mood.toLowerCase()} durumda; kapılar kapalı ve sokaklar gergin (-6 Güvenlik).`);
+          }
+        }
       }
 
-      // Check direct 8 neighbors for settlement protection, monster pressure, and terrain synergy
+      // Check direct 8 neighbors for settlement protection, monster pressure, living crises, and terrain synergy
       let nearFriendlySettlement: string | null = null;
       let nearHostileSite: string | null = null;
+      let nearCrisisNote: string | null = null;
       let adjacentRiverCount = 0;
       let adjacentForestCount = 0;
       let adjacentMountainCount = 0;
@@ -381,6 +433,22 @@ export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
             safety -= 18;
             nearHostileSite = nl.name;
           }
+
+          const nls = nl.livingState;
+          if (nls) {
+            if (nls.activeProblems.length > 0) {
+              const neighborPenalty = Math.min(6, nls.activeProblems.length * 3);
+              safety -= neighborPenalty;
+              if (!nearCrisisNote) {
+                nearCrisisNote = `Komşudaki ${nl.name} bölgesinin aktif sorunu (${nls.activeProblems[0].title}) çevreyi tedirgin ediyor (-${neighborPenalty} Güvenlik).`;
+              }
+            }
+            if (nl.category === 'village' && nls.morale >= 80) {
+              safety += 3;
+            } else if (nls.morale <= 35) {
+              safety -= 3;
+            }
+          }
         }
       }
 
@@ -400,6 +468,15 @@ export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
       if (nearHostileSite) {
         effects.push(`Komşu mazgaldaki ${nearHostileSite} nedeniyle gözcü ve pusu tehlikesi mevcut.`);
       }
+      if (nearCrisisNote) {
+        effects.push(nearCrisisNote);
+      }
+
+      if (activeWeather === 'storm') {
+        effects.push('Bölge genelindeki fırtına ve bora görüş mesafesini keskin biçimde düşürüyor (-8 Güvenlik).');
+      } else if (activeWeather === 'rain') {
+        effects.push('Soğuk yağmur patikaları çamurlaştırıp iz sürmeyi zorlaştırıyor (-4 Güvenlik).');
+      }
 
       // Terrain adjacency synergies
       if ((terrain === 'forest' || terrain === 'deep_forest') && adjacentRiverCount > 0) {
@@ -416,10 +493,28 @@ export function buildMazgalGrid(locations: MapLocation[]): MazgalCell[] {
       if (col >= 11 && (terrain === 'coast' || terrain === 'forest' || terrain === 'deep_forest')) {
         effects.push('Kıtanın en doğu kıyı kuşağı; okyanustan gelen tuzlu rüzgar ve yoğun kıyı sisi ilerlemeyi ağırlaştırır.');
       }
+      if (activeWorldWave && activeWorldWave.dangerShift !== 0) {
+        const hasAffectedLoc =
+          inside.some((loc) =>
+            activeWorldWave.affectedFactions.includes(getGridLocationFaction(loc))
+          ) ||
+          terrain === 'road' ||
+          terrain === 'forest' ||
+          terrain === 'deep_forest';
+        const wavePenalty = hasAffectedLoc
+          ? activeWorldWave.dangerShift * 8
+          : activeWorldWave.dangerShift * 4;
+        safety -= wavePenalty;
+        effects.push(
+          `Bölgesel dalga (${activeWorldWave.title}) arazi güvenliğini düşürüyor (-${wavePenalty} Güvenlik).`
+        );
+      }
+
       if (effects.length === 0) {
         effects.push('Komşu mazgallarla benzer arazi karakteri taşır; olağan dışı bir sınır etkisi yoktur.');
       }
 
+      visibility = Math.max(8, visibility);
       const finalSafety = Math.max(8, Math.min(96, Math.round(safety)));
       const dangerLevel: 1 | 2 | 3 | 4 | 5 =
         finalSafety >= 76

@@ -171,3 +171,294 @@ export interface MazgalCell {
   neighborEffects: string[];
   neighbors: MazgalNeighborSummary[];
 }
+
+export type ProtagonistMood = 'Dinç' | 'Temkinli' | 'Yorgun' | 'Gergin' | 'Yaralı';
+
+export type FactionKey =
+  | 'border_human'
+  | 'elf'
+  | 'beastkin'
+  | 'goblinoids'
+  | 'outlaws';
+
+export type ProtagonistActionType =
+  | 'observe'
+  | 'converse'
+  | 'forage_or_work'
+  | 'help_settlement'
+  | 'rest_camp';
+
+export interface ProtagonistEventRecord {
+  id: string;
+  timestamp: string;
+  kind: 'Gözlem' | 'Konuşma' | 'Yolculuk' | 'Eylem' | 'Karşılaşma' | 'Durum';
+  locationLabel: string;
+  title: string;
+  detail: string;
+}
+
+export type NpcTemperament =
+  | 'Dürüst'
+  | 'Şefkatli'
+  | 'Erdemli'
+  | 'Çıkarcı'
+  | 'Kurnaz'
+  | 'Acımasız'
+  | 'Gözüpek'
+  | 'Romantik';
+
+export type NpcIntent =
+  | 'Samimi Dostluk'
+  | 'Acıyor ve Kolluyor'
+  | 'Gizlice Kolluyor'
+  | 'Kendi Canını Feda Eder'
+  | 'Seni Kullanmaya Çalışıyor'
+  | 'Kandırma Peşinde'
+  | 'Zorbalık ve Şantaj'
+  | 'İftira ve Kumpas'
+  | 'Gasp ve İhanet'
+  | 'Ticari Çıkar / Ücret'
+  | 'Romantik İlgi'
+  | 'Kuşkulu Mesafe';
+
+export type NpcRomanceStatus =
+  | 'Yok'
+  | 'Flört / Yakınlık'
+  | 'Sevgili / Bağlı'
+  | 'Karşılıksız İlgi'
+  | 'Kırgın / Mesafeli';
+
+export type NpcPartyRelation =
+  | 'independent'
+  | 'companion'
+  | 'hired_by_player'
+  | 'hired_player'
+  | 'party_leader';
+
+export type PartyModeType =
+  | 'solo'
+  | 'leading'
+  | 'hired_mercenary'
+  | 'joined_party';
+
+export type InventoryItemId =
+  | 'rust_sword'
+  | 'iron_blade'
+  | 'leather_armor'
+  | 'healing_herb'
+  | 'antidote_vial'
+  | 'torch_bundle'
+  | 'wool_bale'
+  | 'timber_crate'
+  | 'smuggler_salt'
+  | 'elven_cloak'
+  | 'trail_map';
+
+export interface InventoryItem {
+  id: InventoryItemId;
+  name: string;
+  category: 'Silah/Zırh' | 'Tüketim' | 'Ticaret Malı' | 'Teçhizat';
+  qty: number;
+  basePrice: number;
+  physBonus?: number;
+  percBonus?: number;
+  socBonus?: number;
+  armorReduction?: number;
+  description: string;
+}
+
+export interface ActiveContract {
+  id: string;
+  title: string;
+  description: string;
+  originLocationId: string;
+  originLocationName: string;
+  targetLocationId: string;
+  targetLocationName: string;
+  faction: FactionKey;
+  kind: 'Kargo / Takas' | 'Keşif / İz' | 'Eskort / Devriye' | 'Kurtarma / Fidye';
+  requiredItemId?: InventoryItemId;
+  requiredItemQty?: number;
+  rewardSilver: number;
+  repReward: number;
+  deadlineMs: number;
+  createdAt: string;
+  status: 'active' | 'completed' | 'failed';
+}
+
+export type WorldWaveKind =
+  | 'Sis Fırtınası'
+  | 'Goblin Akını'
+  | 'Ticaret Şenliği'
+  | 'Kıtlık Dalgası'
+  | 'Eşkıya İttifakı';
+
+export interface WorldWave {
+  id: string;
+  kind: WorldWaveKind;
+  title: string;
+  description: string;
+  affectedFactions: FactionKey[];
+  startMs: number;
+  endMs: number;
+  priceMultiplier: number;
+  dangerShift: number;
+  moraleShiftPerDay: number;
+}
+
+export type NpcMood =
+  | 'Sadık / Huzurlu'
+  | 'Neşeli / İstekli'
+  | 'Minnettar'
+  | 'Romantik / Etkilenmiş'
+  | 'Temkinli'
+  | 'Gergin / Kuşkulu'
+  | 'Kırgın / Mesafeli'
+  | 'Baskı Altında / Çekingen'
+  | 'Öfkeli / Düşmanca';
+
+export interface LivingNpcContact {
+  id: string;
+  name: string;
+  role: string;
+  cultureLabel: string;
+  faction: FactionKey;
+  trait: string;
+  motive: string;
+  temperament: NpcTemperament;
+  morality?: number; // -100 (tamamen yozlaşmış / acımasız) .. +100 (özverili / erdemli)
+  trust: number; // 0-100 Güven Skalası
+  affection: number;
+  mood?: NpcMood;
+  romanceStatus: NpcRomanceStatus;
+  partyRelation: NpcPartyRelation;
+  dailyWageSilver: number;
+  combatBonus: number;
+  scoutBonus: number;
+  socialBonus: number;
+  currentLocationId: string | null;
+  currentMazgalId: string;
+  homeLocationId: string | null;
+  openToRomance: boolean;
+  lastIntent: NpcIntent;
+  lastReaction: string;
+  intentSuspected: boolean;
+  stoleFromPlayerSilver?: number;
+  isWantedByPlayer?: boolean;
+  isBonded?: boolean;
+  metAt: string;
+  lastUpdatedMs: number;
+  memoryNotes: string[];
+}
+
+export type NpcMomentCategory =
+  | 'Tanışma'
+  | 'Sohbet'
+  | 'Yakınlaşma / Aşk'
+  | 'Yüzleşme'
+  | 'İhanet / Gasp'
+  | 'Yardım / Fedakârlık'
+  | 'Parti / Sözleşme'
+  | 'Kölelik / Azat';
+
+export interface NpcMemoryMoment {
+  id: string;
+  npcId: string;
+  npcName: string;
+  npcRole: string;
+  timestamp: string;
+  timestampMs: number;
+  locationLabel: string;
+  category: NpcMomentCategory;
+  title: string;
+  summary: string;
+  trustDelta?: number;
+  trustAfter?: number;
+  affectionDelta?: number;
+  moodAfter?: NpcMood;
+  significance: 'kritik' | 'önemli' | 'olağan';
+  isMilestone?: boolean;
+  milestoneLabel?: string;
+}
+
+export type TravelPace = 'stealth' | 'normal' | 'forced';
+export type TravelTransport = 'foot' | 'mule' | 'boat';
+export type WeatherConditionKey = 'clear' | 'mist' | 'rain' | 'storm';
+
+export type RoamingUnitKind = 'patrol' | 'caravan' | 'raider' | 'scout';
+
+export interface WorldRoamingUnit {
+  id: string;
+  name: string;
+  kind: RoamingUnitKind;
+  faction: FactionKey;
+  currentLocationId: string;
+  destinationLocationId: string;
+  mazgalId: string;
+  x: number;
+  y: number;
+  strength: number;
+  cargoOrHook: string;
+  statusNote: string;
+  lastMovedMs: number;
+}
+
+export interface ProtagonistState {
+  name: string;
+  title: string;
+  locationId: string | null; // null if standing on open mazgal terrain between locations
+  mazgalId: string;
+  x: number;
+  y: number;
+  health: number; // 0-100
+  stamina: number; // 0-100
+  hunger: number; // 0-100 (0 = tok, 100 = açlık)
+  rations: number;
+  silver: number;
+  mood: ProtagonistMood;
+  playerMorality?: number; // -100 (yozlaşmış/gaspçı) .. +100 (erdemli/kahraman)
+  bountySilver?: number;
+  bountyFactions?: FactionKey[];
+  injuries?: string[];
+  inventory?: InventoryItem[];
+  contracts?: ActiveContract[];
+  activeWorldWave?: WorldWave | null;
+  reputation: Record<FactionKey, number>; // -100 to +100
+  activeConditions: string[];
+  marks: string[];
+  lastObservation: string;
+  lastDialogue: string;
+  journal: ProtagonistEventRecord[];
+  lastUpdatedMs: number;
+  partyMode?: PartyModeType;
+  contacts?: LivingNpcContact[];
+  npcMoments?: NpcMemoryMoment[];
+  capturedCaptives?: number;
+  roamingUnits?: WorldRoamingUnit[];
+  travelPace?: TravelPace;
+  travelTransport?: TravelTransport;
+  lastWeatherUpdateMs?: number;
+}
+
+export type NarrativeMessageRole = 'narrator' | 'dialogue' | 'player';
+
+export type NarrativeChoiceKind = 'observe' | 'talk' | 'action' | 'risk' | 'travel' | 'rest';
+
+export interface NarrativeChoice {
+  id: string;
+  label: string;
+  actionPrompt: string;
+  kind: NarrativeChoiceKind;
+}
+
+export interface NarrativeMessage {
+  id: string;
+  role: NarrativeMessageRole;
+  speaker?: string;
+  text: string;
+  timestamp: string;
+  locationLabel: string;
+  choices?: NarrativeChoice[];
+}
+
+

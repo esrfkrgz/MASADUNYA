@@ -67,6 +67,7 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
       'Kulova’dan yün balyası indiren yaşlı dokumacı',
       'Garnizon yazıcısı ile tartışan gezgin haritacı',
       'Hancı Torin’in avlusunda atını nallayan ulak',
+      'Sınır Köle ve Tutsak Pazarında yeni borç sözleşmelerini okuyan kâtip Varen',
     ],
     dangerSubjects: [
       'Palizad dışı çalılıklara yaklaşan iki goblin gözcüsü',
@@ -88,6 +89,7 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
       'batıdan gelen yeni yolcuların geçiş belgelerini tek tek kontrol etmeye çalışıyor',
       'kışlık tuz ve kurutulmuş et stokunu mahzene indirirken yardım istiyor',
       'kuzey yolundan günlerdir haber gelmemesi üzerine komutanlığa rapor sunuyor',
+      'yakalanan haydut tutsakları ve borçlu işçileri kale meydanındaki mezatta mühürlüyor',
     ],
     dangerSituations: [
       'akşamüstü değişim saatini kollayarak kapı dışındaki ahırlara yaklaşmaya çalışıyor',
@@ -134,6 +136,7 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
       'Bozpençe kürk fiyatlarının bu hafta gizlice düşürülmeye çalışıldığını fısıldıyor.',
       'Gümüş Köprü tarafından gelen iki yolcunun ormanda davul değil ama demir tıngırtısı duyduğunu anlatıyor.',
       'Kulova çobanlarının gece ağıl başında nöbet tutmaya başladığını söylüyor.',
+      'taş meydandaki köle pazarında bu hafta hem yakalanmış haydutların hem de borçlu kervan işçilerinin alınıp satıldığını anlatıyor.',
     ],
   },
 
@@ -148,10 +151,11 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
     ],
     dangerSubjects: [
       'Kuzey yamacından ağıla doğru süzülen üç aç kurt',
-      'Gece karanlığında sürüden kuzu çalmaya çalışan Batakhan hırsızları',
+      'Gece karanlığında sürüden kuzu ve fidye için çoban kaçırmaya çalışan Batakhan hırsızları',
       'Yolunu kaybetmiş yaralı ama saldırgan bir yaban domuzu',
       'Köy merasının sınırındaki dereye inen iki serseri yağmacı',
       'Siste sürüyü dağıtan kurnaz tilki ve ardındaki kurt sürüsü başı',
+      'Sınır ormanından sızıp yalnız çalışan köylüleri yakalamaya çalışan kobold kafilesi',
     ],
     discoverySubjects: [
       'Taş ağılın arka duvarında çamura batmış yabancı çizme izleri',
@@ -303,6 +307,7 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
       'Köy çıkışındaki köprüde pusu kurmuş arbaletli iki gözcü',
       'Bataklıktan dönen öfkeli çete lideri ve kürk çalmış adamları',
       'Misafir çorbasına uyku otu karıştırmaya çalışan mutfak yardımcısı',
+      'Sahte han odasında cazibeyle yolcuların dikkatini dağıtıp kesesini çalan kurnaz tuzakçı',
     ],
     discoverySubjects: [
       'Ahır samanlığının altında saklı mühürlü Külköy vergi kesesi',
@@ -317,11 +322,12 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
       'Kulova merasından çalınan koyunların etini han mutfağında tuzluyor',
       'kuzey geçidinden gelecek yeni bir kervan haberi için atları eyerli tutuyor',
       'kendi aralarında son ganimetin paylaşımı yüzünden seslerini yükseltiyor',
+      'çaresiz düşen yolculara borç ve karanlık iş karşılığı sığınma teklif ediyor',
     ],
     dangerSituations: [
       'misafirpervermiş gibi davranıp grubu gece ahır veya üst kat odalarına çekmeye çalışıyor',
       'arka kapıdan çıkıp köy girişindeki tek kaçış yolunu kesmeye hazırlanıyor',
-      'esir tutulan köylüleri kalkan yaparak grubun geri çekilmesini sağlamaya çalışıyor',
+      'fidye için esir tutulan köylüleri kalkan yaparak grubun geri çekilmesini sağlamaya çalışıyor',
       'sis çöktüğünde meşaleleri söndürüp yıkık evlerin arasından pusu atıyor',
     ],
     discoverySituations: [
@@ -503,7 +509,8 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
       'Çete başı veya kazıcı başının yönettiği silahlı mağara baskın kolu',
       'Dar tünel girişine kurulmuş gergin ipli taş düşürme tuzağı',
       'Alarm çıngıraklarını çalmaya koşan çevik mağara gözcüsü',
-      'Alt galeride zincire vurulmuş esir tüccar çırağını koruyan muhafızlar',
+      'Alt galeride zincire vurulmuş esir köylüleri ve tüccar çırağını fidye için bekleten muhafızlar',
+      'Maden çukurunda esirleri zorla kazı işine koşan kırbaçlı kobold başı',
     ],
     discoverySubjects: [
       'Çöken eski krallık galerisinde bulunmuş sağlam bronz baltalar',
@@ -514,13 +521,13 @@ const ARCHETYPE_DECKS: Record<SettlementArchetype, CombinatorialDeck> = {
     dailySituations: [
       'tavan destek direklerini yenilemeden yan galeriyi kazmaya devam ediyor',
       'çalıntı erzakın en iyi kısmını kimin alacağı konusunda goblinlerle koboldlar arasında kavga çıkarıyor',
-      'gece yakın yollara çıkacak hırsızlık kolu için paslı silahları yağlıyor',
+      'gece yakın yollara çıkacak baskın ve adam kaçırma kolu için paslı silahları yağlıyor',
       'tünellerin girişindeki kemik ve teneke çıngırakları yeniden diziyor',
     ],
     dangerSituations: [
       'düşmanlarını dar ve tuzaklı tünel boğazına çekip üstten taş yuvarlamaya hazırlanıyor',
       'alarm çıngırağını çekip tüm alt galeriyi aynı anda ayaklandırmak üzere',
-      'gece karanlığında yakındaki köprüye veya elf sınırına sızmak için yola çıkıyor',
+      'gece karanlığında yakındaki köye veya elf sınırına sızıp esir ve ganimet kaçırmaya çıkıyor',
     ],
     discoverySituations: [
       'üstteki hurda yığını kaldırıldığında veya yan galeri incelendiğinde bulunuyor',
@@ -851,7 +858,8 @@ export function generateProceduralScene(
   location: MapLocation,
   gameTimeMs: number,
   filter: SceneCategoryFilter = 'auto',
-  safetyScore = 50
+  safetyScore = 50,
+  activeWaveDangerShift = 0
 ): ProceduralSceneCard {
   const archetype: SettlementArchetype = location.livingState?.archetype ?? 'wild_nature';
   const deck = ARCHETYPE_DECKS[archetype];
@@ -863,10 +871,11 @@ export function generateProceduralScene(
   else if (filter === 'danger') mode = 'danger';
   else if (filter === 'discovery') mode = 'discovery';
   else {
-    // Otomatik seçim: güvenlik düşükse veya tehlike yüksekse tehlike şansı artar
-    const dangerThreshold = Math.min(60, Math.max(20, 100 - safetyScore));
+    // Otomatik seçim: güvenlik düşükse veya aktif dalga tehlike kayması varsa tehlike şansı artar
+    const waveBump = Math.max(0, activeWaveDangerShift) * 10;
+    const dangerThreshold = Math.min(72, Math.max(20, 100 - safetyScore + waveBump));
     if (roll1d100 <= dangerThreshold) mode = 'danger';
-    else if (roll1d100 <= dangerThreshold + 32) mode = 'discovery';
+    else if (roll1d100 <= dangerThreshold + 30) mode = 'discovery';
     else mode = 'daily';
   }
 
@@ -998,6 +1007,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       checkHint: 'İkna DC 10',
       outcome: 'Güncel yol durumu ve 1 günlük taze su paylaşımı alınabilir.',
     },
+    {
+      title: 'Yıkılmış Taş Sınır Nişanı ve Gömülü Sandık İzi',
+      detail: 'Uzun otların örttüğü eski bir sınır taşının dibinde yakın zamanda eşilmiş toprak göze çarpıyor.',
+      checkHint: 'Araştırma DC 12',
+      outcome: 'Unutulmuş bir kurye kesesi (2d4 gümüş) veya balmumu mühürlü not bulunur.',
+    },
+    {
+      title: 'Açıkta Dolaşan Başıboş Yük Katırı',
+      detail: 'Semeri yan yatmış, dizgini otlara dolanmış bir katır korkuyla kişniyor; üstünde yarım çuval arpa var.',
+      checkHint: 'Hayvan İdaresi DC 11',
+      outcome: 'Hayvan sakinleştirilirse 2 porsiyon erzak kazanılır veya sahibine teslim edilip itibar alınır.',
+    },
+    {
+      title: 'Tepeden Sızan Goblin Gözcü İkilisi',
+      detail: 'Alçak tepe sırtından çömelen iki goblin gözcüsü, geçitten geçen yolcuları izliyor.',
+      checkHint: 'Algı / Gizlenme DC 13',
+      outcome: 'Erken fark edilirlerse pusudan kaçınılır ya da sorgulanıp inlerinin hareketliliği öğrenilir.',
+    },
   ],
   road: [
     {
@@ -1011,6 +1038,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       detail: 'Çalı diplerinde yere saplanmış iki kırık ok ve ezilmiş çim öbeği görülüyor.',
       checkHint: 'Algı DC 13',
       outcome: 'Yaklaşan eşkıya veya devriye grubu 40 metre öteden fark edilir.',
+    },
+    {
+      title: 'Sahte Yol İşareti ve Çalı Barikatı',
+      detail: 'Kavşaktaki tahta yön tabelası ters çevrilmiş, yan hendeğe taze kesilmiş dikenli dallar yığılmış.',
+      checkHint: 'Algı / Hayatta Kalma DC 12',
+      outcome: 'Haydutların kurduğu yanlış yönlendirme tuzağı bozulur.',
+    },
+    {
+      title: 'Tekerleği Çatlamış Kumaş Çerçisi',
+      detail: 'Yaşlı bir çerçi ve çırağı yol kenarında yükünü indirmeye çalışıyor; etrafa sürekli tedirgin bakıyorlar.',
+      checkHint: 'Yardım / İkna DC 11',
+      outcome: 'Yardım karşılığı ucuz erzak, meşale veya yerleşim söylentisi alınır.',
+    },
+    {
+      title: 'Külköy Garnizon Kuryesinin Düşen Çantası',
+      detail: 'Hızlı geçen bir atlıdan fırlamış mühürsüz meşin torba yol kenarındaki hendeğe yuvarlanmış.',
+      checkHint: 'İnceleme DC 12',
+      outcome: 'Bölgedeki haydut veya goblin hareketliliğine dair güncel askeri rapor okunur.',
     },
   ],
   forest: [
@@ -1026,6 +1071,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       checkHint: 'Hayvan İdaresi / Savaş DC 13',
       outcome: 'Hayvan uzaklaştırılırsa 2 günlük taze et veya post elde edilir.',
     },
+    {
+      title: 'Ağaç Kovuğuna Saklanmış Kaçakçı Zulası',
+      detail: 'Çürümüş büyük bir kayın ağacının dibinde mumlu beze sarılı küçük bir paket gizlenmiş.',
+      checkHint: 'Araştırma DC 13',
+      outcome: 'Şifalı bitki demeti, kurutulmuş et veya 1d6 gümüş sikke çıkar.',
+    },
+    {
+      title: 'Sis Arasında Gece Kampı Kalıntısı ve Zincir İzi',
+      detail: 'Yeni sönmüş ateşin yanında ayak bileği halkası ve sürüklenme izi dikkat çekiyor.',
+      checkHint: 'İz Sürme DC 13',
+      outcome: 'Yakın bölgede esir/tutsak taşıyan bir grubun yönü ve sayısı tespit edilir.',
+    },
+    {
+      title: 'Yüksekçam Sınır Okçusunun Uyarı Oku',
+      detail: 'Önündeki ağaca siyah tüylü bir uyarı oku saplanır; gölgelerden sessiz bir gözcü seslenir.',
+      checkHint: 'İkna / Elf İtibarı DC 12',
+      outcome: 'Niyetin barışçıl olduğu kanıtlanırsa kısa geçit yolu ve güvenli su kaynağı tarif edilir.',
+    },
   ],
   deep_forest: [
     {
@@ -1039,6 +1102,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       detail: 'Büyük çamların gölgesi ve sis yüzünden kuzey-doğu yönü karışır.',
       checkHint: 'Yön Bulma DC 14',
       outcome: 'Başarısızlıkta 1d4 saat ek yürüyüş kaybı yaşanır.',
+    },
+    {
+      title: 'Yosun Tutmuş Kadim Taş Sunak ve Çatlak Kılıç',
+      detail: 'Köklerin sardığı yarım yıkık taş kaidenin üstünde paslanmamış kabza parıltısı seçiliyor.',
+      checkHint: 'Din / Tarih / Araştırma DC 14',
+      outcome: 'Eski Doğu Muhafızlarının işareti ve bileylenebilir bir silah parçası bulunur.',
+    },
+    {
+      title: 'Devrik Sedir Altında Goblin/Kobold İkmal Çukuru',
+      detail: 'Toprağa gömülü sepetlerin içinde çalıntı demir çiviler, peynir kalıpları ve paçavralar var.',
+      checkHint: 'Gizlilik / Yağma DC 13',
+      outcome: 'Nöbetçilere yakalanmadan 1-2 erzak ve birkaç gümüş değerinde hurda toplanır.',
+    },
+    {
+      title: 'Ağaç Tepesinden İnen Pusu Ağı ve Zehirli Diken',
+      detail: 'Kalın sarmaşıkların arasına gerili ip, basıldığında yaprak örtüsünden ağırlık düşürüyor.',
+      checkHint: 'Çeviklik / Algı DC 14',
+      outcome: 'Tuzak savuşturulursa kurucularının izi geriye doğru takip edilebilir.',
     },
   ],
   mountain: [
@@ -1054,6 +1135,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       checkHint: 'İnceleme DC 12',
       outcome: 'Geceyi güvenli ve sıcak geçirmek için ideal barınak sağlanır.',
     },
+    {
+      title: 'Kartal Yuvası Altında Parlayan Cevher Damarı',
+      detail: 'Çatlak gri granit yüzeyinde işlenmemiş gümüş-bakır karışımı ince damar görülüyor.',
+      checkHint: 'Doğa / Madencilik DC 13',
+      outcome: 'Kırılan birkaç parlak taş parçası yerleşimde 3-5 gümüşe satılabilir.',
+    },
+    {
+      title: 'Sırt Geçidinde Donmuş Kurye İskeleti',
+      detail: 'Rüzgar oyuğuna sığınmış eski bir habercinin yanında mühürlü teneke boru duruyor.',
+      checkHint: 'Tırmanış / İnceleme DC 13',
+      outcome: 'Eski bir kervan rotası haritası veya aile yadigarı yüzük alınır.',
+    },
+    {
+      title: 'Kobold Kazıcılarının Açtığı Gizli Hava Bacası',
+      detail: 'Kayaların arasından küf ve kömür kokulu ılık hava yükseliyor; aşağıdan kazma sesleri geliyor.',
+      checkHint: 'Algı / Gizlenme DC 14',
+      outcome: 'Yeraltı tünellerinin konumu öğrenilir veya beklenmedik bir baskın fırsatı doğar.',
+    },
   ],
   river: [
     {
@@ -1067,6 +1166,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       detail: 'Yukarı akıntıdan sürüklenmiş ahşap parçalar kıyıda toplanmıştır.',
       checkHint: 'Araştırma DC 12',
       outcome: '1d4 gümüşlük hurda eşya veya ip/balık ağı kurtarılır.',
+    },
+    {
+      title: 'Devrilmiş Tahta İskele ve Nehir Vergicisi Notu',
+      detail: 'Sel sularının parçaladığı eski köprü ayağında katranlı bir geçit tabelası sallanıyor.',
+      checkHint: 'İnceleme DC 11',
+      outcome: 'Yakınlardaki daha güvenli sığ geçit noktası haritada işaretlenir.',
+    },
+    {
+      title: 'Sazlıkta Yaralı Bir Nehir Balıkçısı veya Kaçak',
+      detail: 'Batağa saplanmış küçük bir sandalın yanında bacağından yaralı biri yardım istiyor.',
+      checkHint: 'İlk Yardım / Sezgi DC 12',
+      outcome: 'Yardım edilirse kıymetli yerel bilgi ve itibar kazanılır; aksi halde eşyasına el konabilir.',
+    },
+    {
+      title: 'Su Kenarına İnen Yırtıcı Sürüsü İzi',
+      detail: 'Kumdaki taze pençe izleri kurtların veya nehir ayısının az önce buradan su içtiğini gösteriyor.',
+      checkHint: 'Doğa / Hayatta Kalma DC 12',
+      outcome: 'Tehlikeli saatlerde kıyıdan uzak kamp kurularak gece baskını önlenir.',
     },
   ],
   marsh: [
@@ -1082,6 +1199,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       checkHint: 'Doğa Bilgisi DC 12',
       outcome: '2 dozluk şifalı bataklık otu kesesi toplanır.',
     },
+    {
+      title: 'Sazlıkta Batmış Eski Kervan Arabası Tekeri',
+      detail: 'Yarı yarıya çamura gömülmüş arabanın üstünde çürümüş meşin kayışlar ve paslı kilit var.',
+      checkHint: 'Güç / Araştırma DC 14',
+      outcome: 'Sandıktan 1d6 gümüş veya sağlam bir demir hançer çıkarılabilir.',
+    },
+    {
+      title: 'Yanıltıcı Bataklık Gazı ve Işık Parıltısı',
+      detail: 'Alacakaranlıkta sazların üstünde yeşilimsi soğuk alevler titreşip yön duygusunu bozuyor.',
+      checkHint: 'Akıl / Yön Bulma DC 13',
+      outcome: 'Bataklığa saplanmadan sağlam toprak çıkışı bulunur.',
+    },
+    {
+      title: 'Çamurda Gizlenmiş Sülük Yuvası ve Kaçak İzi',
+      detail: 'Tahta kalaslardan döşenmiş gizli bir yürüyüş yolu bataklığın kalbine doğru uzanıyor.',
+      checkHint: 'İz Sürme DC 13',
+      outcome: 'Kaçakçıların veya haydutların gizli geçit kestirmesi keşfedilir.',
+    },
   ],
   lake: [
     {
@@ -1095,6 +1230,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       detail: 'Ahşap şamandıraya bağlı sepetin içinde taze göl alabalıkları vardır.',
       checkHint: 'Algı DC 10',
       outcome: '2 porsiyon taze balık ve sağlam hasır ip elde edilir.',
+    },
+    {
+      title: 'Bozpençe Göl Devriye Kayığı',
+      detail: 'Kıyıdaki ağaçların gölgesinden iki mızraklı klan balıkçısı kürek çekerek yaklaşır.',
+      checkHint: 'İkna / Klan İtibarı DC 12',
+      outcome: 'Dostça geçilirse gölün akıntısız geçitleri tarif edilir.',
+    },
+    {
+      title: 'Sığ Suda Çürümüş Eski Taş İskele Kalıntısı',
+      detail: 'Su altından seçilen yosunlu merdivenler eski bir göl kulesinin temelini işaret ediyor.',
+      checkHint: 'Araştırma DC 13',
+      outcome: 'Kuru taş bölmede su geçirmez mühürlü bir bakır tüp bulunur.',
+    },
+    {
+      title: 'Kıyıya Vurmuş Kırık Kürek ve Kanlı Bez',
+      detail: 'Dalgaların kayalara çarptığı koyda parçalanmış bir tekne tahtası duruyor.',
+      checkHint: 'İnceleme DC 12',
+      outcome: 'Gölde korsanlık yapan kaçakçıların son saldırı bölgesi anlaşılır.',
     },
   ],
   coast: [
@@ -1110,6 +1263,24 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       checkHint: 'Algı / Sezgi DC 13',
       outcome: 'Kaçakçı teknesinin kıyıya yaklaşma saati tahmin edilir.',
     },
+    {
+      title: 'Kumlara Gömülü Kırık Kalyon Sandığı',
+      detail: 'Sert fırtınadan sonra kıyıya vurmuş demir çemberli ağır ahşap sandık yarı açık duruyor.',
+      checkHint: 'Güç / El Becerisi DC 13',
+      outcome: 'İçinden sağlam denizci pusulası parçası veya 2d4 gümüş değerinde kumaş çıkar.',
+    },
+    {
+      title: 'Martı Sürüsü ve Kıyıya Vurmuş Ganimet',
+      detail: 'Kayalık burnun ucunda martıların üşüştüğü bir fıçı ve yırtılmış yelken bezi görülüyor.',
+      checkHint: 'Algı DC 11',
+      outcome: '1-2 porsiyon tuzlu erzak ve sağlam yelken ipi kurtarılır.',
+    },
+    {
+      title: 'Falez Patikasında Kaçakçı Gözcüsü',
+      detail: 'Yüksek kayaların kovuğuna sinmiş dürbünlü bir gözcü kıyı yolunu kontrol ediyor.',
+      checkHint: 'Gizlenme / Pazarlık DC 13',
+      outcome: 'Yakalanmadan geçilir ya da kaçak tuz pazarı için parola öğrenilir.',
+    },
   ],
   sea: [
     {
@@ -1124,20 +1295,40 @@ const MAZGAL_TERRAIN_EVENTS: Record<
       checkHint: 'El Becerisi DC 12',
       outcome: 'İçinden su almamış 3 günlük tuzlu et veya baharat çıkar.',
     },
+    {
+      title: 'Sis İçinden Beliren Hayalet Yelken Silueti',
+      detail: 'Sancaksız, kürekleri sessiz inip kalkan kara gövdeli bir kaçakçı teknesi yanından süzülür.',
+      checkHint: 'Algı / Denizcilik DC 14',
+      outcome: 'Çatışmaya girmeden rotasından sıyrılınır veya gizli kargo anlaşması yapılır.',
+    },
+    {
+      title: 'Sığ Kayalık Resifte Mahsur Kalmış Balıkçı',
+      detail: 'Gövdesi delinmiş bir sandal resif taşlarının üstünde yardım işareti veriyor.',
+      checkHint: 'Denizcilik / Atletizm DC 13',
+      outcome: 'Kazazede kurtarılırsa Doğu Adalarının akıntı haritasını paylaşır.',
+    },
+    {
+      title: 'Tuzlu Çalkantıda Pusula Şaşması',
+      detail: 'Alçak fırtına bulutları ufku tamamen örtmüş, kıyı kayalıklarının sesi her yönden geliyor.',
+      checkHint: 'Yön Bulma DC 14',
+      outcome: 'Doğru akıntı yakalanır ve tekne kayalara vurmadan açık suya çıkar.',
+    },
   ],
 };
 
 export function generateMazgalEvent(
   cell: MazgalCell,
-  gameTimeMs: number
+  gameTimeMs: number,
+  activeWaveDangerShift = 0
 ): MazgalProceduralEvent {
   const roll1d20 = rollDie(20);
   const pool = MAZGAL_TERRAIN_EVENTS[cell.terrain];
-  const base = pool[roll1d20 % pool.length];
+  const base = pool[Math.floor(Math.random() * pool.length)];
   const phase = getDayPhaseLabel(gameTimeMs);
 
+  const dangerRollCap = 5 + Math.max(0, activeWaveDangerShift) * 2;
   let kind: MazgalProceduralEvent['kind'] = 'İz ve Keşif';
-  if (roll1d20 <= 5 || (cell.safetyScore < 40 && roll1d20 <= 9)) {
+  if (roll1d20 <= dangerRollCap || (cell.safetyScore < 40 && roll1d20 <= dangerRollCap + 4)) {
     kind = 'Tehlike';
   } else if (roll1d20 >= 16) {
     kind = 'Karşılaşma';

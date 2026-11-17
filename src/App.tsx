@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Clock, RotateCcw } from 'lucide-react';
+import { Calendar, Clock, RotateCcw, User } from 'lucide-react';
 import { ChronicleAtlas } from './components/ChronicleAtlas';
 import { EncounterStudio } from './components/EncounterStudio';
 import { GmToolsPanel } from './components/GmToolsPanel';
@@ -12,15 +12,28 @@ import { LocationInspector } from './components/LocationInspector';
 import { LocationModal } from './components/LocationModal';
 import { MapViewport } from './components/MapViewport';
 import { MazgalInspector } from './components/MazgalInspector';
+import { NarrativeChatbox } from './components/NarrativeChatbox';
+import { ProtagonistDrawer } from './components/ProtagonistDrawer';
 import { TopBar } from './components/TopBar';
 import { INITIAL_LOCATIONS, INITIAL_ROUTES, REGION_INFO } from './data/easternForestData';
 import type {
+  ActiveContract,
   ActiveTab,
   ForestEncounter,
+  InventoryItemId,
   JourneyLogEntry,
   MapLocation,
   MapRoute,
+  MazgalCell,
   MazgalNeighborSummary,
+  NarrativeChoice,
+  NarrativeMessage,
+  ProtagonistActionType,
+  ProtagonistState,
+  SettlementResident,
+  TravelPace,
+  TravelTransport,
+  WeatherConditionKey,
 } from './types/map';
 import {
   INITIAL_GAME_TIME_MS,
@@ -33,17 +46,74 @@ import {
 } from './utils/gameTime';
 import {
   buildMazgalGrid,
-  findShortestMazgalHours,
+  findShortestMazgalPath,
   formatTravelHours,
   getCellForCoords,
 } from './utils/gridEngine';
 import {
   advanceLivingLocations,
+  applyExternalMoraleShift,
   recordProceduralSceneOnLocation,
+  recordRoamingArrivalOnLocation,
   resolveSettlementProblemByParty,
 } from './utils/livingWorldEngine';
-import type { ProceduralSceneCard } from './utils/proceduralWorldDeck';
+import {
+  advancePartyAndContactsWithTime,
+  appendNpcMoment,
+  createContactFromProceduralNpc,
+  createContactFromResident,
+  createNpcMomentRecord,
+  getPartyBonusSummary,
+  interactWithLivingNpc,
+  type NpcInteractionType,
+} from './utils/partyAndRelationsEngine';
+import type {
+  MazgalProceduralEvent,
+  ProceduralNpcCard,
+  ProceduralSceneCard,
+} from './utils/proceduralWorldDeck';
+import {
+  ACTION_HOURS,
+  FACTION_LABELS,
+  applyEncounterResultToProtagonist,
+  applyMazgalEventToProtagonist,
+  applyProtagonistTravel,
+  createInitialProtagonist,
+  getFactionForLocation,
+  getProtagonistModifiers,
+  hydrateProtagonist,
+  performProtagonistAction,
+} from './utils/protagonistEngine';
+import {
+  createInitialNarrativeMessages,
+  createTravelNarrativeNotice,
+  resolveNarrativeTurn,
+} from './utils/narrativeEngine';
 import { soundFx } from './utils/sound';
+import {
+  type EncounterChoiceId,
+  type RoamingArrivalEvent,
+  type ShadowActionType,
+  acceptContract,
+  advanceContractsAndWaves,
+  advanceRegionalWeatherWithTime,
+  advanceRoamingUnitsWithTime,
+  buyMarketItem,
+  buySlaveForParty,
+  checkGuardEncounterOnArrival,
+  evaluateCriticalHealthRecovery,
+  freeBondedRetainer,
+  interactWithRoamingUnit,
+  payBountyAtSettlement,
+  performShadowAction,
+  resolveInteractiveEncounterChoice,
+  resolveSettlementProblemAttempt,
+  sellBondedRetainerAtMarket,
+  sellCaptiveAtMarket,
+  sellMarketItem,
+  tryCompleteContractAtLocation,
+  useInventoryItem,
+} from './utils/worldSystemsEngine';
 
 const STORAGE_KEY = 'sisli_dogu_atlasi_v4';
 
@@ -53,6 +123,9 @@ interface PersistedState {
   partyLocationId: string;
   journeyLog: JourneyLogEntry[];
   gameTimeMs?: number;
+  protagonist?: ProtagonistState;
+  activeWeatherKey?: WeatherConditionKey;
+  narrativeMessages?: NarrativeMessage[];
 }
 
 function loadInitialState(): PersistedState {
@@ -62,9 +135,24 @@ function loadInitialState(): PersistedState {
       const parsed = JSON.parse(raw) as PersistedState;
       if (Array.isArray(parsed.locations) && parsed.locations.length > 0) {
         const hydratedLocations = parsed.locations.map((loc) => {
-          if (loc.livingState) return loc;
           const seed = INITIAL_LOCATIONS.find((initLoc) => initLoc.id === loc.id);
-          return seed?.livingState ? { ...loc, livingState: seed.livingState } : loc;
+          if (!loc.livingState) {
+            return seed?.livingState ? { ...loc, livingState: seed.livingState } : loc;
+          }
+          if (
+            loc.id === 'loc-kuldere' &&
+            !loc.livingState.establishments.includes('Sınır Köle ve Tutsak Pazarı')
+          ) {
+            return {
+              ...loc,
+              playerLore: seed?.playerLore ?? loc.playerLore,
+              livingState: {
+                ...loc.livingState,
+                establishments: [...loc.livingState.establishments, 'Sınır Köle ve Tutsak Pazarı'],
+              },
+            };
+          }
+          return loc;
         });
         return {
           ...parsed,
@@ -73,6 +161,9 @@ function loadInitialState(): PersistedState {
             typeof parsed.gameTimeMs === 'number'
               ? parsed.gameTimeMs
               : INITIAL_GAME_TIME_MS,
+          protagonist: parsed.protagonist
+            ? hydrateProtagonist(parsed.protagonist, hydratedLocations)
+            : createInitialProtagonist(hydratedLocations),
         };
       }
     }
@@ -84,13 +175,14 @@ function loadInitialState(): PersistedState {
     routes: INITIAL_ROUTES,
     partyLocationId: 'loc-kuldere',
     gameTimeMs: INITIAL_GAME_TIME_MS,
+    protagonist: createInitialProtagonist(INITIAL_LOCATIONS),
     journeyLog: [
       {
         id: 'log-init',
         locationId: 'loc-kuldere',
         locationName: 'Külköy Sınır Kalesi',
         timestamp: formatGameDateTime(INITIAL_GAME_TIME_MS),
-        note: 'Grup, 300 fersahlık Kadim Sis Ormanı eşiğinde sefer hazırlıklarını tamamladı.',
+        note: 'Külköy Sınır Kalesi eşiğinde sefer hazırlıklarını tamamladın.',
       },
     ],
   };
@@ -101,6 +193,12 @@ export default function App() {
   const [locations, setLocations] = useState<MapLocation[]>(initial.locations);
   const [routes, setRoutes] = useState<MapRoute[]>(initial.routes);
   const [partyLocationId, setPartyLocationId] = useState<string>(initial.partyLocationId);
+  const [protagonist, setProtagonist] = useState<ProtagonistState>(() =>
+    hydrateProtagonist(
+      initial.protagonist ?? createInitialProtagonist(initial.locations),
+      initial.locations
+    )
+  );
   const [journeyLog, setJourneyLog] = useState<JourneyLogEntry[]>(initial.journeyLog);
   const [gameTimeMs, setGameTimeMs] = useState<number>(
     initial.gameTimeMs ?? INITIAL_GAME_TIME_MS
@@ -111,8 +209,9 @@ export default function App() {
   const [selectedLocationId, setSelectedLocationId] = useState<string>(initial.partyLocationId);
 
   const [fogOfWar, setFogOfWar] = useState<boolean>(false);
-  const [showMist, setShowMist] = useState<boolean>(true);
-  const [mistDensity, setMistDensity] = useState<number>(26);
+  const [activeWeatherKey, setActiveWeatherKey] = useState<WeatherConditionKey>(
+    initial.activeWeatherKey ?? 'mist'
+  );
   const [showRoutes, setShowRoutes] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
@@ -120,12 +219,44 @@ export default function App() {
   const [pendingCoords, setPendingCoords] = useState<{ x: number; y: number } | null>(null);
   const [editingLocation, setEditingLocation] = useState<MapLocation | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(false);
-  const [drawerMode, setDrawerMode] = useState<'location' | 'mazgal'>('location');
+  const [drawerMode, setDrawerMode] = useState<'location' | 'mazgal' | 'protagonist'>('location');
+  const [protagonistTab, setProtagonistTab] = useState<'status' | 'bag' | 'party' | 'relations' | 'moments'>('status');
   const [selectedMazgalId, setSelectedMazgalId] = useState<string>('B5');
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
   const [resetKey, setResetKey] = useState<number>(0);
 
-  const mazgalCells = useMemo(() => buildMazgalGrid(locations), [locations]);
+  const mazgalCells = useMemo(
+    () => buildMazgalGrid(locations, activeWeatherKey, protagonist.activeWorldWave ?? null),
+    [locations, activeWeatherKey, protagonist.activeWorldWave]
+  );
+
+  const [narrativeMessages, setNarrativeMessages] = useState<NarrativeMessage[]>(() => {
+    if (Array.isArray(initial.narrativeMessages) && initial.narrativeMessages.length > 0) {
+      return initial.narrativeMessages;
+    }
+    const initCells = buildMazgalGrid(
+      initial.locations,
+      initial.activeWeatherKey ?? 'mist',
+      initial.protagonist?.activeWorldWave ?? null
+    );
+    const startProtag = hydrateProtagonist(
+      initial.protagonist ?? createInitialProtagonist(initial.locations),
+      initial.locations
+    );
+    const startLoc = startProtag.locationId
+      ? initial.locations.find((l) => l.id === startProtag.locationId)
+      : undefined;
+    const startCell = initCells.find((c) => c.id === startProtag.mazgalId) ?? initCells[0];
+    return createInitialNarrativeMessages({
+      protagonist: startProtag,
+      currentLocation: startLoc,
+      currentMazgal: startCell,
+      allLocations: initial.locations,
+      routes: initial.routes,
+      activeWeatherKey: initial.activeWeatherKey ?? 'mist',
+      gameTimeMs: initial.gameTimeMs ?? INITIAL_GAME_TIME_MS,
+    });
+  });
 
   useEffect(() => {
     try {
@@ -135,12 +266,24 @@ export default function App() {
         partyLocationId,
         journeyLog,
         gameTimeMs,
+        protagonist,
+        activeWeatherKey,
+        narrativeMessages: narrativeMessages.slice(-80),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // Ignore storage quota errors
     }
-  }, [locations, routes, partyLocationId, journeyLog, gameTimeMs]);
+  }, [
+    locations,
+    routes,
+    partyLocationId,
+    journeyLog,
+    gameTimeMs,
+    protagonist,
+    activeWeatherKey,
+    narrativeMessages,
+  ]);
 
   useEffect(() => {
     soundFx.enabled = soundEnabled;
@@ -161,34 +304,230 @@ export default function App() {
 
   const selectedLocation = locations.find((l) => l.id === selectedLocationId) ?? locations[0];
   const selectedMazgal = mazgalCells.find((c) => c.id === selectedMazgalId) ?? mazgalCells[0];
+  const protagonistCurrentLoc = protagonist.locationId
+    ? locations.find((l) => l.id === protagonist.locationId)
+    : undefined;
+  const protagonistCurrentCell =
+    mazgalCells.find((c) => c.id === protagonist.mazgalId) ?? mazgalCells[0];
+
+  const processWorldTick = (
+    draftProtag: ProtagonistState,
+    prevMs: number,
+    nextMs: number,
+    arrivalLoc?: MapLocation,
+    arrivalCell?: MazgalCell,
+    checkGuardsOnArrival = false
+  ): {
+    finalProtag: ProtagonistState;
+    notices: string[];
+    roamingArrivals: RoamingArrivalEvent[];
+  } => {
+    const notices: string[] = [];
+    let current = advancePartyAndContactsWithTime(
+      draftProtag,
+      locations,
+      routes,
+      prevMs,
+      nextMs
+    );
+
+    const waveRes = advanceContractsAndWaves(current, prevMs, nextMs);
+    current = waveRes.nextProtagonist;
+    if (waveRes.waveAnnouncement) notices.push(waveRes.waveAnnouncement);
+
+    const weatherRes = advanceRegionalWeatherWithTime(
+      activeWeatherKey,
+      current.activeWorldWave,
+      prevMs,
+      nextMs
+    );
+    if (weatherRes.nextWeather !== activeWeatherKey) {
+      setActiveWeatherKey(weatherRes.nextWeather);
+    }
+    if (weatherRes.weatherNotice) {
+      notices.push(weatherRes.weatherNotice);
+    }
+
+    const roamRes = advanceRoamingUnitsWithTime(
+      current.roamingUnits ?? [],
+      locations,
+      routes,
+      prevMs,
+      nextMs
+    );
+    current = {
+      ...current,
+      roamingUnits: roamRes.nextUnits,
+    };
+    if (roamRes.notices.length > 0) {
+      notices.push(...roamRes.notices);
+    }
+
+    if (checkGuardsOnArrival && arrivalLoc) {
+      const mods = getProtagonistModifiers(
+        current,
+        arrivalLoc,
+        arrivalCell ?? protagonistCurrentCell
+      );
+      const guardRes = checkGuardEncounterOnArrival(current, arrivalLoc, nextMs, mods);
+      current = guardRes.nextProtagonist;
+      if (guardRes.alertNote) notices.push(guardRes.alertNote);
+    }
+
+    const critRes = evaluateCriticalHealthRecovery(
+      current,
+      arrivalLoc ?? protagonistCurrentLoc,
+      arrivalCell ?? protagonistCurrentCell,
+      nextMs
+    );
+    current = critRes.nextProtagonist;
+    if (critRes.recoveryNotice) notices.push(critRes.recoveryNotice);
+
+    return { finalProtag: current, notices, roamingArrivals: roamRes.arrivals };
+  };
+
+  const applyLocationsTick = (
+    prevLocs: MapLocation[],
+    prevMs: number,
+    nextMs: number,
+    updatedProtag: ProtagonistState,
+    roamingArrivals: RoamingArrivalEvent[] = []
+  ): MapLocation[] => {
+    const prevDay = Math.floor((prevMs - INITIAL_GAME_TIME_MS) / (24 * 60 * 60 * 1000));
+    const nextDay = Math.floor((nextMs - INITIAL_GAME_TIME_MS) / (24 * 60 * 60 * 1000));
+    const daysCrossed = Math.max(0, nextDay - prevDay);
+    const wave = updatedProtag.activeWorldWave;
+    let baseLocs = prevLocs;
+
+    if (roamingArrivals.length > 0) {
+      baseLocs = baseLocs.map((loc) => {
+        const hits = roamingArrivals.filter((a) => a.locationId === loc.id);
+        let nextLoc = loc;
+        for (const hit of hits) {
+          nextLoc = recordRoamingArrivalOnLocation(
+            nextLoc,
+            hit.unitName,
+            hit.unitKind,
+            hit.detail,
+            hit.moraleDelta,
+            nextMs,
+            hit.spawnRaid
+          );
+        }
+        return nextLoc;
+      });
+    }
+
+    if (wave && daysCrossed > 0 && wave.moraleShiftPerDay !== 0) {
+      const totalWaveShift = wave.moraleShiftPerDay * daysCrossed;
+      baseLocs = baseLocs.map((loc) => {
+        const fac = getFactionForLocation(loc);
+        if (!wave.affectedFactions.includes(fac)) return loc;
+        return applyExternalMoraleShift(
+          loc,
+          totalWaveShift,
+          nextMs,
+          wave.title,
+          wave.description
+        );
+      });
+    }
+    return advanceLivingLocations(baseLocs, nextMs, routes, updatedProtag);
+  };
 
   const advanceCampaignClock = (hours: number, summary: string): number => {
     const safeHours = Math.max(1, Math.round(hours));
     const nextMs = addGameHours(gameTimeMs, safeHours);
     setGameTimeMs(nextMs);
-    setLastTimeAction(`${summary} (+${formatTravelHours(safeHours)})`);
-    setLocations((prev) => advanceLivingLocations(prev, nextMs));
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      protagonist,
+      gameTimeMs,
+      nextMs
+    );
+    setLastTimeAction(
+      notices.length > 0
+        ? `${summary} (+${formatTravelHours(safeHours)}) · ${notices[0]}`
+        : `${summary} (+${formatTravelHours(safeHours)})`
+    );
+    setProtagonist(finalProtag);
+    setLocations((prev) =>
+      applyLocationsTick(prev, gameTimeMs, nextMs, finalProtag, roamingArrivals)
+    );
     return nextMs;
   };
 
-  const handleResolveVillageProblem = (locationId: string, problemId: string) => {
-    soundFx.playSelectChime();
-    setLocations((prev) =>
-      prev.map((loc) =>
-        loc.id === locationId
-          ? resolveSettlementProblemByParty(loc, problemId, gameTimeMs)
-          : loc
-      )
+  const handleResolveVillageProblem = (locationId: string, problemId: string): string => {
+    soundFx.playDiceRoll();
+    const targetLoc = locations.find((l) => l.id === locationId);
+    const targetCell = targetLoc
+      ? mazgalCells.find((c) => c.id === getCellForCoords(targetLoc.x, targetLoc.y).id) ??
+        protagonistCurrentCell
+      : protagonistCurrentCell;
+    const nextMs = addGameHours(gameTimeMs, 3);
+    setGameTimeMs(nextMs);
+
+    const attempt = resolveSettlementProblemAttempt(
+      protagonist,
+      targetLoc,
+      problemId,
+      targetCell,
+      nextMs
     );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      attempt.nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      targetLoc,
+      targetCell
+    );
+    setProtagonist(finalProtag);
+
+    setLocations((prev) => {
+      const updated = prev.map((loc) => {
+        if (loc.id !== locationId) return loc;
+        if (attempt.solved) {
+          return resolveSettlementProblemByParty(loc, problemId, nextMs);
+        }
+        if (!loc.livingState) return loc;
+        return {
+          ...loc,
+          livingState: {
+            ...loc.livingState,
+            activeProblems: loc.livingState.activeProblems.map((p) =>
+              p.id === problemId ? { ...p, attempts: p.attempts + 1 } : p
+            ),
+          },
+        };
+      });
+      return applyLocationsTick(updated, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+
+    const fullMsg = notices.length > 0 ? `${attempt.message} ${notices[0]}` : attempt.message;
+    setLastTimeAction(`${targetLoc?.name ?? 'Yerleşim'} Müdahale (+3 Saat)`);
+    return fullMsg;
   };
 
   const handleRecordProceduralScene = (scene: ProceduralSceneCard, advanceHours: number) => {
     soundFx.playSelectChime();
     let targetTimeMs = gameTimeMs;
+    let currentProtag = protagonist;
+    let arrivals: RoamingArrivalEvent[] = [];
     if (advanceHours > 0) {
       targetTimeMs = addGameHours(gameTimeMs, advanceHours);
       setGameTimeMs(targetTimeMs);
-      setLastTimeAction(`${scene.title} (+${formatTravelHours(advanceHours)})`);
+      const { finalProtag, notices, roamingArrivals } = processWorldTick(
+        protagonist,
+        gameTimeMs,
+        targetTimeMs
+      );
+      currentProtag = finalProtag;
+      arrivals = roamingArrivals;
+      setLastTimeAction(
+        notices.length > 0
+          ? `${scene.title} (+${formatTravelHours(advanceHours)}) · ${notices[0]}`
+          : `${scene.title} (+${formatTravelHours(advanceHours)})`
+      );
+      setProtagonist(currentProtag);
     }
     setLocations((prev) => {
       const updatedWithScene = prev.map((loc) =>
@@ -197,7 +536,7 @@ export default function App() {
           : loc
       );
       return advanceHours > 0
-        ? advanceLivingLocations(updatedWithScene, targetTimeMs)
+        ? applyLocationsTick(updatedWithScene, gameTimeMs, targetTimeMs, currentProtag, arrivals)
         : updatedWithScene;
     });
     setJourneyLog((prev) => [
@@ -212,21 +551,251 @@ export default function App() {
     ]);
   };
 
-  const handleQuickTimeAction = (hours: number, label: string) => {
+  const handlePerformProtagonistAction = (actionType: ProtagonistActionType) => {
     soundFx.playSelectChime();
-    const nextMs = advanceCampaignClock(hours, label);
-    const currentLoc = locations.find((l) => l.id === partyLocationId);
-    if (hours >= 4 && currentLoc) {
+    const hours = ACTION_HOURS[actionType];
+    const actionNames: Record<ProtagonistActionType, string> = {
+      observe: 'Çevre Gözlemi',
+      converse: 'Yerlilerle Görüşme',
+      forage_or_work: 'İş / Avlanma',
+      help_settlement: 'Bölge Desteği',
+      rest_camp: 'Kamp ve Dinlenme',
+    };
+    const nextMs = addGameHours(gameTimeMs, hours);
+    setGameTimeMs(nextMs);
+
+    const outcome = performProtagonistAction(
+      protagonist,
+      actionType,
+      protagonistCurrentLoc,
+      protagonistCurrentCell,
+      nextMs
+    );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      outcome.nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      protagonistCurrentLoc,
+      protagonistCurrentCell
+    );
+    setLastTimeAction(
+      notices.length > 0
+        ? `${actionNames[actionType]} (+${formatTravelHours(hours)}) · ${notices[0]}`
+        : `${actionNames[actionType]} (+${formatTravelHours(hours)})`
+    );
+    setProtagonist(finalProtag);
+
+    setLocations((prev) => {
+      const shifted = protagonistCurrentLoc
+        ? prev.map((loc) =>
+            loc.id === protagonistCurrentLoc.id
+              ? applyExternalMoraleShift(
+                  loc,
+                  outcome.locationMoraleDelta,
+                  nextMs,
+                  `${protagonist.name} Etkisi`,
+                  outcome.locationEventNote
+                )
+              : loc
+          )
+        : prev;
+      return applyLocationsTick(shifted, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+
+    if (hours >= 3) {
       setJourneyLog((prev) => [
         {
           id: `log-${Date.now()}`,
-          locationId: currentLoc.id,
-          locationName: currentLoc.name,
+          locationId: protagonistCurrentLoc?.id ?? 'loc-kuldere',
+          locationName: protagonistCurrentLoc?.name ?? `Mazgal ${protagonistCurrentCell.id}`,
           timestamp: formatGameDateTime(nextMs),
-          note: `${label} tamamlandı (+${formatTravelHours(hours)}).`,
+          note: outcome.nextProtagonist.journal[0]?.detail ?? `${actionNames[actionType]} tamamlandı.`,
         },
         ...prev,
       ]);
+    }
+  };
+
+  const handleEatRation = () => {
+    if (protagonist.rations <= 0) return;
+    soundFx.playSelectChime();
+    setProtagonist((prev) => ({
+      ...prev,
+      rations: prev.rations - 1,
+      hunger: Math.max(0, prev.hunger - 45),
+      stamina: Math.min(100, prev.stamina + 8),
+      lastObservation: '1 porsiyon kuru erzak tükettin; açlığın yatıştı ve gücün toplandı.',
+    }));
+  };
+
+  const handleRenameProtagonist = (name: string, title: string) => {
+    setProtagonist((prev) => ({ ...prev, name, title }));
+  };
+
+  const handleApplyEncounterOutcome = (
+    result: 'victory' | 'costly' | 'flee',
+    title: string,
+    locationId?: string
+  ) => {
+    soundFx.playSelectChime();
+    const targetLoc = locationId
+      ? locations.find((l) => l.id === locationId)
+      : protagonistCurrentLoc;
+    const cell = targetLoc
+      ? mazgalCells.find((c) => c.id === getCellForCoords(targetLoc.x, targetLoc.y).id) ??
+        protagonistCurrentCell
+      : protagonistCurrentCell;
+
+    const { nextProtagonist, moraleDelta } = applyEncounterResultToProtagonist(
+      protagonist,
+      result,
+      title,
+      targetLoc,
+      cell,
+      gameTimeMs
+    );
+    const critRes = evaluateCriticalHealthRecovery(nextProtagonist, targetLoc, cell, gameTimeMs);
+    setProtagonist(critRes.nextProtagonist);
+    if (critRes.recoveryNotice) setLastTimeAction(critRes.recoveryNotice);
+    if (targetLoc && moraleDelta !== 0) {
+      setLocations((prev) =>
+        prev.map((loc) =>
+          loc.id === targetLoc.id
+            ? applyExternalMoraleShift(
+                loc,
+                moraleDelta,
+                gameTimeMs,
+                title,
+                `${protagonist.name} karşılaşma sonucu bölgeye yansıdı.`
+              )
+            : loc
+        )
+      );
+    }
+  };
+
+  const handleResolveInteractiveChoice = (
+    choice: EncounterChoiceId,
+    title: string,
+    dc: number,
+    locationId?: string
+  ): string => {
+    soundFx.playDiceRoll();
+    const targetLoc = locationId
+      ? locations.find((l) => l.id === locationId)
+      : protagonistCurrentLoc;
+    const cell = targetLoc
+      ? mazgalCells.find((c) => c.id === getCellForCoords(targetLoc.x, targetLoc.y).id) ??
+        protagonistCurrentCell
+      : protagonistCurrentCell;
+
+    const nextMs = addGameHours(gameTimeMs, 1);
+    setGameTimeMs(nextMs);
+    const mods = getProtagonistModifiers(protagonist, targetLoc, cell);
+    const res = resolveInteractiveEncounterChoice(
+      protagonist,
+      choice,
+      title,
+      dc,
+      targetLoc,
+      cell,
+      nextMs,
+      mods
+    );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      res.nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      targetLoc,
+      cell
+    );
+    setProtagonist(finalProtag);
+
+    setLocations((prev) => {
+      const shifted =
+        targetLoc && res.moraleDelta !== 0
+          ? prev.map((loc) =>
+              loc.id === targetLoc.id
+                ? applyExternalMoraleShift(
+                    loc,
+                    res.moraleDelta,
+                    nextMs,
+                    title,
+                    res.summaryText
+                  )
+                : loc
+            )
+          : prev;
+      return applyLocationsTick(shifted, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+
+    const fullMsg = notices.length > 0 ? `${res.summaryText} ${notices[0]}` : res.summaryText;
+    setLastTimeAction(`${title} (+1 Saat)`);
+    return fullMsg;
+  };
+
+  const handleApplyMazgalEvent = (cell: MazgalCell, ev: MazgalProceduralEvent) => {
+    soundFx.playSelectChime();
+    const nextMs = addGameHours(gameTimeMs, 1);
+    setGameTimeMs(nextMs);
+
+    const { nextProtagonist, localMoraleDelta } = applyMazgalEventToProtagonist(
+      protagonist,
+      cell,
+      ev.title,
+      ev.kind,
+      ev.outcomeNote,
+      nextMs
+    );
+    const insideLoc = cell.locationsInside[0];
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      insideLoc,
+      cell
+    );
+    setLastTimeAction(
+      notices.length > 0
+        ? `Mazgal ${cell.id}: ${ev.title} (+1 Saat) · ${notices[0]}`
+        : `Mazgal ${cell.id}: ${ev.title} (+1 Saat)`
+    );
+    setProtagonist(finalProtag);
+
+    setLocations((prev) => {
+      const shifted =
+        insideLoc && localMoraleDelta !== 0
+          ? prev.map((loc) =>
+              loc.id === insideLoc.id
+                ? applyExternalMoraleShift(
+                    loc,
+                    localMoraleDelta,
+                    nextMs,
+                    ev.title,
+                    `Mazgal ${cell.id} olayından gelen etki yerleşime yansıdı.`
+                  )
+                : loc
+            )
+          : prev;
+      return applyLocationsTick(shifted, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+
+    setJourneyLog((prev) => [
+      {
+        id: `log-mzg-${Date.now()}`,
+        locationId: insideLoc?.id ?? partyLocationId,
+        locationName: insideLoc ? insideLoc.name : `Mazgal ${cell.id} (${cell.terrainLabel})`,
+        timestamp: formatGameDateTime(nextMs),
+        note: `${ev.title}: ${ev.outcomeNote}`,
+      },
+      ...prev,
+    ]);
+  };
+
+  const handleWeatherChanged = (nextWeather: WeatherConditionKey, label?: string) => {
+    setActiveWeatherKey(nextWeather);
+    if (label) {
+      setLastTimeAction(`Hava Değişti: ${label}`);
     }
   };
 
@@ -244,71 +813,686 @@ export default function App() {
     setInspectorOpen(true);
   };
 
+  const handleOpenProtagonist = (tab: 'status' | 'bag' | 'party' | 'relations' | 'moments' = 'status') => {
+    soundFx.playSelectChime();
+    setProtagonistTab(tab);
+    setDrawerMode('protagonist');
+    setInspectorOpen(true);
+  };
+
+  const handleShadowAction = (action: ShadowActionType): string => {
+    soundFx.playDiceRoll();
+    const hours = action === 'spread_discord' ? 1 : 2;
+    const nextMs = addGameHours(gameTimeMs, hours);
+    setGameTimeMs(nextMs);
+    const mods = getProtagonistModifiers(protagonist, protagonistCurrentLoc, protagonistCurrentCell);
+    const res = performShadowAction(
+      protagonist,
+      action,
+      protagonistCurrentLoc,
+      protagonistCurrentCell,
+      nextMs,
+      mods
+    );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      res.nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      protagonistCurrentLoc,
+      protagonistCurrentCell
+    );
+    setProtagonist(finalProtag);
+    setLocations((prev) => {
+      const shifted = protagonistCurrentLoc
+        ? prev.map((loc) =>
+            loc.id === protagonistCurrentLoc.id
+              ? applyExternalMoraleShift(
+                  loc,
+                  res.locationMoraleDelta,
+                  nextMs,
+                  res.locationNoteTitle,
+                  res.locationNoteDetail
+                )
+              : loc
+          )
+        : prev;
+      return applyLocationsTick(shifted, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+    const fullFeedback = notices.length > 0 ? `${res.feedbackText} ${notices[0]}` : res.feedbackText;
+    setLastTimeAction(`${res.locationNoteTitle ?? 'Karanlık Eylem'} (+${hours} Saat)`);
+    setJourneyLog((prev) => [
+      {
+        id: `log-shd-${Date.now()}`,
+        locationId: protagonistCurrentLoc?.id ?? partyLocationId,
+        locationName: protagonistCurrentLoc?.name ?? `Mazgal ${protagonistCurrentCell.id}`,
+        timestamp: formatGameDateTime(nextMs),
+        note: fullFeedback,
+      },
+      ...prev,
+    ]);
+    return fullFeedback;
+  };
+
+  const handleUseItem = (itemId: InventoryItemId): string => {
+    soundFx.playSelectChime();
+    const res = useInventoryItem(protagonist, itemId, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleBuyItem = (itemId: 'rations' | InventoryItemId): string => {
+    soundFx.playSelectChime();
+    const res = buyMarketItem(protagonist, protagonistCurrentLoc, itemId, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleSellItem = (itemId: 'rations' | InventoryItemId): string => {
+    soundFx.playSelectChime();
+    const res = sellMarketItem(protagonist, protagonistCurrentLoc, itemId, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleBuySlave = (listingId: string, mode: 'bond_retainer' | 'manumit'): string => {
+    soundFx.playSelectChime();
+    const res = buySlaveForParty(protagonist, protagonistCurrentLoc, listingId, mode, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleSellCaptive = (): string => {
+    soundFx.playSelectChime();
+    const res = sellCaptiveAtMarket(protagonist, protagonistCurrentLoc, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleSellBondedNpc = (contactId: string): string => {
+    soundFx.playSelectChime();
+    const res = sellBondedRetainerAtMarket(protagonist, contactId, protagonistCurrentLoc, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleFreeBondedNpc = (contactId: string): string => {
+    soundFx.playSelectChime();
+    const res = freeBondedRetainer(protagonist, contactId, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleAcceptContract = (contract: ActiveContract): string => {
+    soundFx.playSelectChime();
+    const res = acceptContract(protagonist, contract);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleCompleteContract = (contractId: string): string => {
+    soundFx.playSelectChime();
+    const res = tryCompleteContractAtLocation(
+      protagonist,
+      contractId,
+      protagonistCurrentLoc,
+      gameTimeMs
+    );
+    setProtagonist(res.nextProtagonist);
+    if (protagonistCurrentLoc && res.locationMoraleDelta !== 0) {
+      setLocations((prev) =>
+        prev.map((loc) =>
+          loc.id === protagonistCurrentLoc.id
+            ? applyExternalMoraleShift(
+                loc,
+                res.locationMoraleDelta,
+                gameTimeMs,
+                'Kontrat Teslimi',
+                res.message
+              )
+            : loc
+        )
+      );
+    }
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handlePayBounty = (): string => {
+    soundFx.playSelectChime();
+    const res = payBountyAtSettlement(protagonist, protagonistCurrentLoc, gameTimeMs);
+    setProtagonist(res.nextProtagonist);
+    setLastTimeAction(res.message);
+    return res.message;
+  };
+
+  const handleNpcInteraction = (contactId: string, action: NpcInteractionType): string => {
+    soundFx.playSelectChime();
+    const mods = getProtagonistModifiers(
+      protagonist,
+      protagonistCurrentLoc,
+      protagonistCurrentCell
+    );
+    const previewTimeMs =
+      action === 'talk' ||
+      action === 'flirt_or_romance' ||
+      action === 'seduce_or_charm' ||
+      action === 'confront_or_test' ||
+      action === 'exploit_or_rob_npc'
+        ? addGameHours(gameTimeMs, 1)
+        : gameTimeMs;
+
+    const {
+      nextProtagonist,
+      feedbackText,
+      hoursSpent,
+      locationMoraleDelta,
+      locationNoteTitle,
+      locationNoteDetail,
+    } = interactWithLivingNpc(
+      protagonist,
+      contactId,
+      action,
+      protagonistCurrentLoc,
+      protagonistCurrentCell,
+      previewTimeMs,
+      mods,
+      routes,
+      locations
+    );
+
+    if (hoursSpent > 0) {
+      setGameTimeMs(previewTimeMs);
+      const { finalProtag, notices } = processWorldTick(
+        nextProtagonist,
+        gameTimeMs,
+        previewTimeMs,
+        protagonistCurrentLoc,
+        protagonistCurrentCell
+      );
+      setLastTimeAction(
+        notices.length > 0
+          ? `${feedbackText} (+${hoursSpent} Saat) · ${notices[0]}`
+          : `${feedbackText} (+${hoursSpent} Saat)`
+      );
+      setProtagonist(finalProtag);
+      setLocations((prev) => {
+        const shifted =
+          protagonistCurrentLoc && (locationMoraleDelta || locationNoteDetail)
+            ? prev.map((loc) =>
+                loc.id === protagonistCurrentLoc.id
+                  ? applyExternalMoraleShift(
+                      loc,
+                      locationMoraleDelta ?? 0,
+                      previewTimeMs,
+                      locationNoteTitle,
+                      locationNoteDetail
+                    )
+                  : loc
+              )
+            : prev;
+        return applyLocationsTick(shifted, gameTimeMs, previewTimeMs, finalProtag);
+      });
+    } else {
+      setProtagonist(nextProtagonist);
+    }
+    return feedbackText;
+  };
+
+  const handleMeetProceduralNpc = (npc: ProceduralNpcCard, locationId?: string) => {
+    soundFx.playSelectChime();
+    const targetLoc = locationId
+      ? locations.find((l) => l.id === locationId)
+      : protagonistCurrentLoc;
+    const cell = targetLoc
+      ? mazgalCells.find((c) => c.id === getCellForCoords(targetLoc.x, targetLoc.y).id) ??
+        protagonistCurrentCell
+      : protagonistCurrentCell;
+    const newContact = createContactFromProceduralNpc(npc, targetLoc, cell, gameTimeMs);
+    const ts = formatGameDateTime(gameTimeMs);
+    const placeLabel = targetLoc?.name ?? `Mazgal ${cell.id}`;
+    setProtagonist((prev) => {
+      const existing = prev.contacts ?? [];
+      if (existing.some((c) => c.name === newContact.name && c.currentLocationId === newContact.currentLocationId)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        contacts: [newContact, ...existing],
+        npcMoments: appendNpcMoment(
+          prev.npcMoments,
+          createNpcMomentRecord({
+            npcId: newContact.id,
+            npcName: newContact.name,
+            npcRole: newContact.role,
+            timestamp: ts,
+            timestampMs: gameTimeMs,
+            locationLabel: placeLabel,
+            category: 'Tanışma',
+            title: `${newContact.name} ile Karşılaşma`,
+            summary: newContact.lastReaction,
+            moodAfter: newContact.mood,
+            significance: 'olağan',
+          })
+        ),
+      };
+    });
+    setActiveTab('map');
+    setProtagonistTab('relations');
+    setDrawerMode('protagonist');
+    setInspectorOpen(true);
+  };
+
+  const handleMeetResident = (resident: SettlementResident, locationId: string) => {
+    soundFx.playSelectChime();
+    const targetLoc = locations.find((l) => l.id === locationId);
+    if (!targetLoc) return;
+    const newContact = createContactFromResident(resident, targetLoc, gameTimeMs);
+    const ts = formatGameDateTime(gameTimeMs);
+    setProtagonist((prev) => {
+      const existing = prev.contacts ?? [];
+      if (existing.some((c) => c.name === newContact.name)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        contacts: [newContact, ...existing],
+        npcMoments: appendNpcMoment(
+          prev.npcMoments,
+          createNpcMomentRecord({
+            npcId: newContact.id,
+            npcName: newContact.name,
+            npcRole: newContact.role,
+            timestamp: ts,
+            timestampMs: gameTimeMs,
+            locationLabel: targetLoc.name,
+            category: 'Tanışma',
+            title: `${newContact.name} ile Yerleşimde Tanışma`,
+            summary: newContact.lastReaction,
+            moodAfter: newContact.mood,
+            significance: 'olağan',
+          })
+        ),
+      };
+    });
+    setProtagonistTab('relations');
+    setDrawerMode('protagonist');
+    setInspectorOpen(true);
+  };
+
+  const handleChangeTravelMode = (pace: TravelPace, transport: TravelTransport) => {
+    soundFx.playSelectChime();
+    setProtagonist((prev) => ({
+      ...prev,
+      travelPace: pace,
+      travelTransport: transport,
+    }));
+  };
+
+  const handleInteractRoamingUnit = (
+    unitId: string,
+    mode: 'greet_trade' | 'escort_aid' | 'ambush_raid'
+  ): string => {
+    soundFx.playDiceRoll();
+    const nextMs = addGameHours(gameTimeMs, 1);
+    setGameTimeMs(nextMs);
+    const res = interactWithRoamingUnit(
+      protagonist,
+      unitId,
+      mode,
+      protagonistCurrentCell,
+      nextMs
+    );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      res.nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      protagonistCurrentLoc,
+      protagonistCurrentCell
+    );
+    setProtagonist(finalProtag);
+    setLocations((prev) =>
+      applyLocationsTick(prev, gameTimeMs, nextMs, finalProtag, roamingArrivals)
+    );
+    const fullMsg = notices.length > 0 ? `${res.message} ${notices[0]}` : res.message;
+    setLastTimeAction(`Yol Karşılaşması (+1 Saat)`);
+    return fullMsg;
+  };
+
+  const computeEffectiveTravelHours = (
+    baseHours: number,
+    hasDirectRoute: boolean,
+    requiresBoat: boolean
+  ): number => {
+    const pace = protagonist.travelPace ?? 'normal';
+    const transport = protagonist.travelTransport ?? 'foot';
+    const paceMult = pace === 'stealth' ? 1.35 : pace === 'forced' ? 0.78 : 1.0;
+    const transportMult =
+      transport === 'mule'
+        ? hasDirectRoute
+          ? 0.85
+          : 1.05
+        : transport === 'boat' && requiresBoat
+        ? 0.75
+        : 1.0;
+    const weatherMult =
+      activeWeatherKey === 'storm'
+        ? 1.4
+        : activeWeatherKey === 'rain'
+        ? 1.22
+        : activeWeatherKey === 'mist'
+        ? 1.12
+        : 1.0;
+    return Math.max(1, Math.round(baseHours * paceMult * transportMult * weatherMult));
+  };
+
   const handleStepMazgal = (fromId: string, nb: MazgalNeighborSummary) => {
-    const nextMs = advanceCampaignClock(nb.travelHours, `Mazgal ${fromId} → ${nb.id}`);
-    const currentLoc = locations.find((l) => l.id === partyLocationId);
+    const pace = protagonist.travelPace ?? 'normal';
+    const transport = protagonist.travelTransport ?? 'foot';
+    const adjustedHours = computeEffectiveTravelHours(
+      nb.travelHours,
+      false,
+      Boolean(nb.requiresBoat)
+    );
+    const nextMs = addGameHours(gameTimeMs, adjustedHours);
+    setGameTimeMs(nextMs);
+
+    const targetCell = mazgalCells.find((c) => c.id === nb.id) ?? protagonistCurrentCell;
+    const locInside = targetCell.locationsInside[0];
+    const { nextProtagonist, localMoraleDelta } = applyProtagonistTravel(
+      protagonist,
+      locInside,
+      targetCell,
+      adjustedHours,
+      nextMs,
+      {
+        pace,
+        transport,
+        weather: activeWeatherKey,
+        requiresBoat: Boolean(nb.requiresBoat),
+      }
+    );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      locInside,
+      targetCell,
+      Boolean(locInside)
+    );
+    setLastTimeAction(
+      notices.length > 0
+        ? `Mazgal ${fromId} → ${nb.id} (+${formatTravelHours(adjustedHours)}) · ${notices[0]}`
+        : `Mazgal ${fromId} → ${nb.id} (+${formatTravelHours(adjustedHours)})`
+    );
+    setProtagonist(finalProtag);
+    if (locInside) {
+      setPartyLocationId(locInside.id);
+    }
+
+    setLocations((prev) => {
+      const updated = prev.map((loc) => {
+        if (locInside && loc.id === locInside.id) {
+          const discoveredLoc = { ...loc, discovered: true };
+          return applyExternalMoraleShift(discoveredLoc, localMoraleDelta, nextMs);
+        }
+        return loc;
+      });
+      return applyLocationsTick(updated, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+
     setJourneyLog((prev) => [
       {
         id: `log-${Date.now()}`,
-        locationId: currentLoc?.id ?? 'loc-kuldere',
-        locationName: `Mazgal ${nb.id} (${nb.direction})`,
+        locationId: locInside?.id ?? partyLocationId,
+        locationName: locInside ? locInside.name : `Mazgal ${nb.id} (${nb.direction})`,
         timestamp: formatGameDateTime(nextMs),
-        note: `Mazgal ${fromId} karesinden ${nb.id} karesine ${nb.travelLabel} (${nb.distanceFersah} Fersah) yüründü.`,
+        note: `Mazgal ${fromId} karesinden ${nb.id} karesine ${formatTravelHours(adjustedHours)} (${nb.distanceFersah} Fersah) yürüdün.`,
       },
       ...prev,
+    ]);
+
+    setNarrativeMessages((prev) => [
+      ...prev.slice(-79),
+      createTravelNarrativeNotice(
+        {
+          protagonist: finalProtag,
+          currentLocation: locInside,
+          currentMazgal: targetCell,
+          allLocations: locations,
+          routes,
+          activeWeatherKey,
+          gameTimeMs: nextMs,
+        },
+        finalProtag.lastObservation
+      ),
     ]);
   };
 
   const handleMoveParty = (id: string) => {
     const target = locations.find((l) => l.id === id);
     if (!target) return;
-    const current = locations.find((l) => l.id === partyLocationId);
+    const current = locations.find((l) => l.id === (protagonist.locationId ?? partyLocationId));
     soundFx.playMoveToken();
 
-    let travelHours = 12;
-    if (current && current.id !== target.id) {
-      const directRoute = routes.find(
-        (r) =>
-          (r.fromId === current.id && r.toId === target.id) ||
-          (r.toId === current.id && r.fromId === target.id)
+    const pace = protagonist.travelPace ?? 'normal';
+    const transport = protagonist.travelTransport ?? 'foot';
+    let baseHours = 12;
+    let hasDirectRoute = false;
+    let requiresBoat = false;
+    const fromCellId = protagonist.mazgalId || (current ? getCellForCoords(current.x, current.y).id : 'B5');
+    const toCellSummary = getCellForCoords(target.x, target.y);
+
+    if (fromCellId === toCellSummary.id) {
+      baseHours = Math.max(
+        2,
+        Math.round(Math.hypot(target.x - protagonist.x, target.y - protagonist.y) * 1.5)
       );
+    } else {
+      const directRoute = current
+        ? routes.find(
+            (r) =>
+              (r.fromId === current.id && r.toId === target.id) ||
+              (r.toId === current.id && r.fromId === target.id)
+          )
+        : undefined;
       if (directRoute) {
-        travelHours = directRoute.travelHours;
+        baseHours = directRoute.travelHours;
+        hasDirectRoute = true;
       } else {
-        const fromCell = getCellForCoords(current.x, current.y);
-        const toCell = getCellForCoords(target.x, target.y);
-        if (fromCell.id === toCell.id) {
-          travelHours = Math.max(
-            2,
-            Math.round(Math.hypot(target.x - current.x, target.y - current.y) * 1.5)
-          );
-        } else {
-          travelHours = findShortestMazgalHours(fromCell.id, toCell.id, mazgalCells);
-        }
+        const plan = findShortestMazgalPath(fromCellId, toCellSummary.id, mazgalCells);
+        baseHours = plan.hours;
+        requiresBoat = plan.requiresBoat;
       }
     }
 
-    const nextMs = advanceCampaignClock(
-      travelHours,
-      current ? `${current.name} → ${target.name}` : target.name
-    );
+    const travelHours = computeEffectiveTravelHours(baseHours, hasDirectRoute, requiresBoat);
+    const nextMs = addGameHours(gameTimeMs, travelHours);
+    setGameTimeMs(nextMs);
 
-    setPartyLocationId(id);
-    setLocations((prev) =>
-      prev.map((loc) => (loc.id === id ? { ...loc, discovered: true } : loc))
+    const targetCell = mazgalCells.find((c) => c.id === toCellSummary.id) ?? protagonistCurrentCell;
+    const { nextProtagonist, localMoraleDelta } = applyProtagonistTravel(
+      protagonist,
+      target,
+      targetCell,
+      travelHours,
+      nextMs,
+      {
+        pace,
+        transport,
+        weather: activeWeatherKey,
+        requiresBoat,
+      }
     );
+    const { finalProtag, notices, roamingArrivals } = processWorldTick(
+      nextProtagonist,
+      gameTimeMs,
+      nextMs,
+      target,
+      targetCell,
+      true
+    );
+    const routeText = `${current && protagonist.locationId ? current.name : `Mazgal ${fromCellId}`} → ${target.name} (+${formatTravelHours(travelHours)})`;
+    setLastTimeAction(notices.length > 0 ? `${routeText} · ${notices[0]}` : routeText);
+    setProtagonist(finalProtag);
+    setPartyLocationId(id);
+
+    setLocations((prev) => {
+      const updated = prev.map((loc) => {
+        if (loc.id === id) {
+          return applyExternalMoraleShift(
+            { ...loc, discovered: true },
+            localMoraleDelta,
+            nextMs
+          );
+        }
+        return loc;
+      });
+      return applyLocationsTick(updated, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+    });
+
     setJourneyLog((prev) => [
       {
         id: `log-${Date.now()}`,
         locationId: target.id,
         locationName: target.name,
         timestamp: formatGameDateTime(nextMs),
-        note: current
-          ? `Grup ${current.name} noktasından ${target.name} bölgesine ${formatTravelHours(travelHours)} yürüyüşle ulaştı.`
-          : `Grup ${target.name} bölgesine ulaştı.`,
+        note: `${target.name} bölgesine ${formatTravelHours(travelHours)} yürüyüşle ulaştın.`,
       },
       ...prev,
     ]);
+
+    setNarrativeMessages((prev) => [
+      ...prev.slice(-79),
+      createTravelNarrativeNotice(
+        {
+          protagonist: finalProtag,
+          currentLocation: target,
+          currentMazgal: targetCell,
+          allLocations: locations,
+          routes,
+          activeWeatherKey,
+          gameTimeMs: nextMs,
+        },
+        finalProtag.lastObservation
+      ),
+    ]);
+  };
+
+  const handleSubmitNarrativeTurn = (rawText: string, chosenOption?: NarrativeChoice) => {
+    soundFx.playSelectChime();
+    const res = resolveNarrativeTurn({
+      rawText,
+      chosenOption,
+      protagonist,
+      currentLocation: protagonistCurrentLoc,
+      currentMazgal: protagonistCurrentCell,
+      allLocations: locations,
+      routes,
+      activeWeatherKey,
+      gameTimeMs,
+    });
+
+    if (res.travelToLocationId) {
+      setNarrativeMessages((prev) => [...prev.slice(-78), ...res.appendedMessages]);
+      handleMoveParty(res.travelToLocationId);
+      return;
+    }
+
+    if (res.travelToMazgal) {
+      setNarrativeMessages((prev) => [...prev.slice(-78), ...res.appendedMessages]);
+      handleStepMazgal(protagonist.mazgalId, res.travelToMazgal);
+      return;
+    }
+
+    let finalProtag = res.nextProtagonist;
+    let targetMs = gameTimeMs;
+    let roamingArrivals: RoamingArrivalEvent[] = [];
+
+    if (res.hoursSpent > 0) {
+      targetMs = addGameHours(gameTimeMs, res.hoursSpent);
+      setGameTimeMs(targetMs);
+      const tick = processWorldTick(
+        res.nextProtagonist,
+        gameTimeMs,
+        targetMs,
+        protagonistCurrentLoc,
+        protagonistCurrentCell
+      );
+      finalProtag = tick.finalProtag;
+      roamingArrivals = tick.roamingArrivals;
+      setLastTimeAction(
+        tick.notices.length > 0
+          ? `Anlatı Eylemi (+${formatTravelHours(res.hoursSpent)}) · ${tick.notices[0]}`
+          : `Anlatı Eylemi (+${formatTravelHours(res.hoursSpent)})`
+      );
+    }
+
+    setProtagonist(finalProtag);
+
+    if (
+      res.hoursSpent > 0 ||
+      res.locationMoraleDelta !== 0 ||
+      res.solvedProblemId ||
+      res.attemptedProblemId
+    ) {
+      setLocations((prev) => {
+        const updated = prev.map((loc) => {
+          if (loc.id !== protagonistCurrentLoc?.id) return loc;
+          let nextLoc = loc;
+          if (res.solvedProblemId) {
+            nextLoc = resolveSettlementProblemByParty(nextLoc, res.solvedProblemId, targetMs);
+          } else if (res.attemptedProblemId && nextLoc.livingState) {
+            nextLoc = {
+              ...nextLoc,
+              livingState: {
+                ...nextLoc.livingState,
+                activeProblems: nextLoc.livingState.activeProblems.map((p) =>
+                  p.id === res.attemptedProblemId ? { ...p, attempts: p.attempts + 1 } : p
+                ),
+              },
+            };
+          }
+          if (res.locationMoraleDelta !== 0 || res.locationNoteDetail) {
+            nextLoc = applyExternalMoraleShift(
+              nextLoc,
+              res.locationMoraleDelta,
+              targetMs,
+              res.locationNoteTitle,
+              res.locationNoteDetail
+            );
+          }
+          return nextLoc;
+        });
+        return res.hoursSpent > 0
+          ? applyLocationsTick(updated, gameTimeMs, targetMs, finalProtag, roamingArrivals)
+          : updated;
+      });
+    }
+
+    setNarrativeMessages((prev) => [...prev.slice(-76), ...res.appendedMessages]);
+  };
+
+  const handleResetNarrative = () => {
+    soundFx.playSelectChime();
+    setNarrativeMessages(
+      createInitialNarrativeMessages({
+        protagonist,
+        currentLocation: protagonistCurrentLoc,
+        currentMazgal: protagonistCurrentCell,
+        allLocations: locations,
+        routes,
+        activeWeatherKey,
+        gameTimeMs,
+      })
+    );
   };
 
   const handleEncounterRolled = (encounter: ForestEncounter) => {
@@ -407,13 +1591,17 @@ export default function App() {
     setLocations(INITIAL_LOCATIONS);
     setRoutes(INITIAL_ROUTES);
     setPartyLocationId('loc-kuldere');
+    const freshProtag = createInitialProtagonist(INITIAL_LOCATIONS);
+    const freshCells = buildMazgalGrid(INITIAL_LOCATIONS, 'mist', null);
+    const startLoc = INITIAL_LOCATIONS.find((l) => l.id === freshProtag.locationId);
+    const startCell = freshCells.find((c) => c.id === freshProtag.mazgalId) ?? freshCells[0];
+    setProtagonist(freshProtag);
     setSelectedLocationId('loc-kuldere');
     setSelectedMazgalId('B5');
     setDrawerMode('location');
     setInspectorOpen(false);
     setFogOfWar(false);
-    setShowMist(true);
-    setMistDensity(26);
+    setActiveWeatherKey('mist');
     setShowRoutes(true);
     setIsPlacingPin(false);
     setPendingCoords(null);
@@ -428,13 +1616,25 @@ export default function App() {
         locationId: 'loc-kuldere',
         locationName: 'Külköy Sınır Kalesi',
         timestamp: formatGameDateTime(INITIAL_GAME_TIME_MS),
-        note: 'Grup, 300 fersahlık Kadim Sis Ormanı eşiğinde sefer hazırlıklarını tamamladı.',
+        note: 'Külköy Sınır Kalesi eşiğinde sefer hazırlıklarını tamamladın.',
       },
     ]);
+    setNarrativeMessages(
+      createInitialNarrativeMessages({
+        protagonist: freshProtag,
+        currentLocation: startLoc,
+        currentMazgal: startCell,
+        allLocations: INITIAL_LOCATIONS,
+        routes: INITIAL_ROUTES,
+        activeWeatherKey: 'mist',
+        gameTimeMs: INITIAL_GAME_TIME_MS,
+      })
+    );
   };
 
   const currentDay = getDayNumber(gameTimeMs);
   const currentPhase = getDayPhaseLabel(gameTimeMs);
+  const partyBonusSummary = getPartyBonusSummary(protagonist.contacts ?? []);
 
   return (
     <div className="flex min-h-screen flex-col bg-[#0D1512] text-[#EDE6D6]">
@@ -448,7 +1648,7 @@ export default function App() {
         onTogglePlacePin={handleTogglePlacePin}
       />
 
-      {/* Persistent In-Game Campaign Calendar & Clock Strip */}
+      {/* Persistent In-Game Campaign Calendar, Protagonist Status & Clock Strip */}
       <div className="border-b border-[#D4A853]/12 bg-[#101A16]">
         <div className="mx-auto flex max-w-[1920px] flex-wrap items-center justify-between gap-3 px-4 py-2 text-xs sm:px-6">
           <div className="flex flex-wrap items-center gap-2.5 tabular-nums">
@@ -465,11 +1665,61 @@ export default function App() {
             <span className="text-[#B7C4BE]">
               {currentDay}. Gün ({currentPhase})
             </span>
+            <span aria-hidden="true" className="text-[#56665F]">·</span>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('map');
+                handleOpenProtagonist('status');
+              }}
+              className="inline-flex items-center gap-1.5 rounded border border-[#67C7C0]/35 bg-[#13231F] px-2.5 py-0.5 text-[11px] font-medium text-[#9CE3DD] hover:border-[#67C7C0]/70 hover:bg-[#192F29] cursor-pointer"
+            >
+              <User className="h-3 w-3 text-[#67C7C0]" />
+              <span>
+                {protagonist.name} · Can {protagonist.health} · {partyBonusSummary.modeLabel}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('map');
+                handleOpenProtagonist('bag');
+              }}
+              className="rounded border border-[#D4A853]/28 bg-[#1A241F] px-2 py-0.5 text-[11px] font-medium text-[#E8C472] hover:border-[#D4A853]/65 cursor-pointer"
+            >
+              Çanta ({protagonist.silver}g)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('map');
+                handleOpenProtagonist('party');
+              }}
+              className="rounded border border-[#D4A853]/28 bg-[#1A241F] px-2 py-0.5 text-[11px] font-medium text-[#E8C472] hover:border-[#D4A853]/65 cursor-pointer"
+            >
+              Parti & İlişkiler
+            </button>
+            {(protagonist.bountySilver ?? 0) > 0 && (
+              <>
+                <span aria-hidden="true" className="text-[#56665F]">·</span>
+                <span className="font-mono text-[11px] font-semibold text-[#E89898]">
+                  Ödül: {protagonist.bountySilver}g
+                </span>
+              </>
+            )}
+            {protagonist.activeWorldWave && (
+              <>
+                <span aria-hidden="true" className="hidden lg:inline text-[#56665F]">·</span>
+                <span className="hidden lg:inline text-[11px] text-[#E29D72]">
+                  Dalga: {protagonist.activeWorldWave.kind}
+                </span>
+              </>
+            )}
             {lastTimeAction && (
               <>
-                <span aria-hidden="true" className="hidden sm:inline text-[#56665F]">·</span>
-                <span className="hidden sm:inline text-[#67C7C0]">
-                  Son Aksiyon: {lastTimeAction}
+                <span aria-hidden="true" className="hidden xl:inline text-[#56665F]">·</span>
+                <span className="hidden xl:inline text-[#D4A853]">
+                  {lastTimeAction}
                 </span>
               </>
             )}
@@ -478,21 +1728,28 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => handleQuickTimeAction(1, 'Çevre Araştırması')}
+              onClick={() => handlePerformProtagonistAction('observe')}
               className="rounded border border-[#D4A853]/22 bg-[#17241F] px-2.5 py-1 text-[11px] font-medium text-[#D9D3C4] transition-colors hover:border-[#D4A853]/55 hover:text-[#F8F3E6] whitespace-nowrap cursor-pointer"
             >
-              Araştır (+1 Saat)
+              Gözlem (+1 Saat)
             </button>
             <button
               type="button"
-              onClick={() => handleQuickTimeAction(4, 'Bölge Devriyesi')}
+              onClick={() => handlePerformProtagonistAction('converse')}
               className="rounded border border-[#D4A853]/22 bg-[#17241F] px-2.5 py-1 text-[11px] font-medium text-[#D9D3C4] transition-colors hover:border-[#D4A853]/55 hover:text-[#F8F3E6] whitespace-nowrap cursor-pointer"
             >
-              Devriye (+4 Saat)
+              Konuş (+1 Saat)
             </button>
             <button
               type="button"
-              onClick={() => handleQuickTimeAction(8, 'Gece Kampı ve Dinlenme')}
+              onClick={() => handlePerformProtagonistAction('help_settlement')}
+              className="rounded border border-[#D4A853]/22 bg-[#17241F] px-2.5 py-1 text-[11px] font-medium text-[#D9D3C4] transition-colors hover:border-[#D4A853]/55 hover:text-[#F8F3E6] whitespace-nowrap cursor-pointer"
+            >
+              Destek Ol (+4 Saat)
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePerformProtagonistAction('rest_camp')}
               className="rounded border border-[#67C7C0]/30 bg-[#14231F] px-2.5 py-1 text-[11px] font-medium text-[#9CE3DD] transition-colors hover:border-[#67C7C0]/60 hover:bg-[#192D28] whitespace-nowrap cursor-pointer"
             >
               Kamp Kur (+8 Saat)
@@ -553,36 +1810,51 @@ export default function App() {
               </p>
             </div>
 
-            {/* Full-Width Map Canvas */}
-            <MapViewport
-              locations={locations}
-              routes={routes}
-              mazgalCells={mazgalCells}
-              selectedLocationId={selectedLocationId}
-              selectedMazgalId={drawerMode === 'mazgal' ? selectedMazgalId : null}
-              partyLocationId={partyLocationId}
-              fogOfWar={fogOfWar}
-              showMist={showMist}
-              mistDensity={mistDensity}
-              showRoutes={showRoutes}
-              soundEnabled={soundEnabled}
-              isPlacingPin={isPlacingPin}
-              resetKey={resetKey}
-              onSelectLocation={handleSelectLocation}
-              onSelectMazgal={handleSelectMazgal}
-              onPlacePinAt={handlePlacePinAt}
-              onToggleFogOfWar={() => setFogOfWar((v) => !v)}
-              onToggleMist={() => setShowMist((v) => !v)}
-              onMistDensityChange={setMistDensity}
-              onToggleRoutes={() => setShowRoutes((v) => !v)}
-              onToggleSound={() => setSoundEnabled((v) => !v)}
-              onOpenInspector={() => {
-                setDrawerMode('location');
-                setInspectorOpen(true);
-              }}
-            />
+            {/* Full-Width Map Canvas & Narrative Chatbox Below */}
+            <div className="flex flex-col gap-5">
+              <MapViewport
+                locations={locations}
+                routes={routes}
+                mazgalCells={mazgalCells}
+                selectedLocationId={selectedLocationId}
+                selectedMazgalId={drawerMode === 'mazgal' ? selectedMazgalId : null}
+                partyLocationId={protagonist.locationId ?? ''}
+                protagonist={protagonist}
+                activeWeatherKey={activeWeatherKey}
+                fogOfWar={fogOfWar}
+                showRoutes={showRoutes}
+                soundEnabled={soundEnabled}
+                isPlacingPin={isPlacingPin}
+                resetKey={resetKey}
+                onSelectLocation={handleSelectLocation}
+                onSelectMazgal={handleSelectMazgal}
+                onPlacePinAt={handlePlacePinAt}
+                onToggleFogOfWar={() => setFogOfWar((v) => !v)}
+                onToggleRoutes={() => setShowRoutes((v) => !v)}
+                onToggleSound={() => setSoundEnabled((v) => !v)}
+                onChangeTravelMode={handleChangeTravelMode}
+                onWeatherChanged={handleWeatherChanged}
+                onOpenInspector={() => {
+                  setDrawerMode('location');
+                  setInspectorOpen(true);
+                }}
+                onOpenProtagonist={handleOpenProtagonist}
+              />
 
-            {/* Slide-Over Inspector Drawer (Location or Mazgal) */}
+              <NarrativeChatbox
+                messages={narrativeMessages}
+                protagonistName={protagonist.name}
+                currentPlaceLabel={
+                  protagonistCurrentLoc
+                    ? `${protagonistCurrentLoc.name} · Mazgal ${protagonistCurrentCell.id}`
+                    : `Mazgal ${protagonistCurrentCell.id} (${protagonistCurrentCell.terrainLabel})`
+                }
+                onSubmitAction={handleSubmitNarrativeTurn}
+                onResetNarrative={handleResetNarrative}
+              />
+            </div>
+
+            {/* Slide-Over Inspector Drawer (Location, Mazgal, or Protagonist) */}
             {inspectorOpen && (
               <div className="fixed inset-0 z-40 flex justify-end">
                 <div
@@ -591,14 +1863,57 @@ export default function App() {
                   className="fixed inset-0 bg-black/55 backdrop-blur-[1px]"
                 />
                 <div className="relative z-10 h-full w-full max-w-[440px] overflow-y-auto border-l border-[#D4A853]/25 bg-[#141F1B] p-4 shadow-2xl">
-                  {drawerMode === 'mazgal' ? (
+                  {drawerMode === 'protagonist' ? (
+                    <ProtagonistDrawer
+                      key={protagonistTab}
+                      protagonist={protagonist}
+                      currentLocation={protagonistCurrentLoc}
+                      currentMazgal={protagonistCurrentCell}
+                      allLocations={locations}
+                      gameTimeMs={gameTimeMs}
+                      initialTab={protagonistTab}
+                      onRenameProtagonist={handleRenameProtagonist}
+                      onPerformAction={handlePerformProtagonistAction}
+                      onShadowAction={handleShadowAction}
+                      onUseItem={handleUseItem}
+                      onBuyItem={handleBuyItem}
+                      onSellItem={handleSellItem}
+                      onBuySlave={handleBuySlave}
+                      onSellCaptive={handleSellCaptive}
+                      onSellBondedNpc={handleSellBondedNpc}
+                      onFreeBondedNpc={handleFreeBondedNpc}
+                      onAcceptContract={handleAcceptContract}
+                      onCompleteContract={handleCompleteContract}
+                      onPayBounty={handlePayBounty}
+                      onEatRation={handleEatRation}
+                      onMoveToLocation={(id) => {
+                        handleMoveParty(id);
+                        setSelectedLocationId(id);
+                      }}
+                      onNpcInteraction={handleNpcInteraction}
+                      onInspectCurrentLocation={() => {
+                        if (protagonistCurrentLoc) {
+                          setSelectedLocationId(protagonistCurrentLoc.id);
+                          setDrawerMode('location');
+                        }
+                      }}
+                      onInspectCurrentMazgal={() => {
+                        setSelectedMazgalId(protagonist.mazgalId);
+                        setDrawerMode('mazgal');
+                      }}
+                      onClose={() => setInspectorOpen(false)}
+                    />
+                  ) : drawerMode === 'mazgal' ? (
                     <MazgalInspector
                       cell={selectedMazgal}
+                      protagonist={protagonist}
                       fogOfWar={fogOfWar}
                       gameTimeMs={gameTimeMs}
                       resetKey={resetKey}
                       onSelectMazgal={handleSelectMazgal}
                       onStepMazgal={handleStepMazgal}
+                      onApplyMazgalEvent={handleApplyMazgalEvent}
+                      onInteractRoamingUnit={handleInteractRoamingUnit}
                       onSelectLocation={handleSelectLocation}
                       onClose={() => setInspectorOpen(false)}
                     />
@@ -607,7 +1922,8 @@ export default function App() {
                       location={selectedLocation}
                       routes={routes}
                       allLocations={locations}
-                      isPartyHere={selectedLocation?.id === partyLocationId}
+                      isPartyHere={selectedLocation?.id === protagonist.locationId}
+                      protagonist={protagonist}
                       fogOfWar={fogOfWar}
                       gameTimeMs={gameTimeMs}
                       onMoveParty={handleMoveParty}
@@ -620,7 +1936,11 @@ export default function App() {
                       onDeleteLocation={handleDeleteLocation}
                       onInspectMazgal={handleSelectMazgal}
                       onResolveVillageProblem={handleResolveVillageProblem}
+                      onInteractRoamingUnit={handleInteractRoamingUnit}
                       onRecordProceduralScene={handleRecordProceduralScene}
+                      onMeetProceduralNpc={handleMeetProceduralNpc}
+                      onMeetResident={handleMeetResident}
+                      onOpenProtagonist={handleOpenProtagonist}
                       onClose={() => setInspectorOpen(false)}
                     />
                   )}
@@ -633,7 +1953,7 @@ export default function App() {
         {activeTab === 'chronicle' && (
           <ChronicleAtlas
             locations={locations}
-            partyLocationId={partyLocationId}
+            partyLocationId={protagonist.locationId ?? ''}
             fogOfWar={fogOfWar}
             journeyLog={journeyLog}
             onInspectOnMap={(id) => {
@@ -650,11 +1970,17 @@ export default function App() {
             locations={locations}
             routes={routes}
             mazgalCells={mazgalCells}
-            partyLocationId={partyLocationId}
+            partyLocationId={protagonist.locationId ?? partyLocationId}
+            protagonist={protagonist}
+            activeWeatherKey={activeWeatherKey}
             gameTimeMs={gameTimeMs}
             resetKey={resetKey}
             onEncounterRolled={handleEncounterRolled}
             onRecordProceduralScene={handleRecordProceduralScene}
+            onApplyEncounterOutcome={handleApplyEncounterOutcome}
+            onResolveInteractiveChoice={handleResolveInteractiveChoice}
+            onWeatherChanged={handleWeatherChanged}
+            onMeetProceduralNpc={handleMeetProceduralNpc}
           />
         )}
 

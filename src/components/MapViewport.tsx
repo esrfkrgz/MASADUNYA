@@ -13,14 +13,25 @@ import {
   Plus,
   RotateCcw,
   Route,
+  Shield,
   Skull,
   Trees,
+  Truck,
+  User,
   Volume2,
   VolumeX,
-  Wind,
 } from 'lucide-react';
 import { OVERWORLD_MAP_IMAGE } from '../data/easternForestData';
-import type { LocationCategory, MapLocation, MapRoute, MazgalCell } from '../types/map';
+import type {
+  LocationCategory,
+  MapLocation,
+  MapRoute,
+  MazgalCell,
+  ProtagonistState,
+  TravelPace,
+  TravelTransport,
+  WeatherConditionKey,
+} from '../types/map';
 
 interface MapViewportProps {
   locations: MapLocation[];
@@ -29,9 +40,9 @@ interface MapViewportProps {
   selectedLocationId: string;
   selectedMazgalId: string | null;
   partyLocationId: string;
+  protagonist?: ProtagonistState;
+  activeWeatherKey?: WeatherConditionKey;
   fogOfWar: boolean;
-  showMist: boolean;
-  mistDensity: number;
   showRoutes: boolean;
   soundEnabled: boolean;
   isPlacingPin: boolean;
@@ -40,11 +51,12 @@ interface MapViewportProps {
   onSelectMazgal: (id: string) => void;
   onPlacePinAt: (x: number, y: number) => void;
   onToggleFogOfWar: () => void;
-  onToggleMist: () => void;
-  onMistDensityChange: (val: number) => void;
   onToggleRoutes: () => void;
   onToggleSound: () => void;
+  onChangeTravelMode?: (pace: TravelPace, transport: TravelTransport) => void;
+  onWeatherChanged?: (weatherKey: WeatherConditionKey, label?: string) => void;
   onOpenInspector?: () => void;
+  onOpenProtagonist?: () => void;
 }
 
 function getCategoryIcon(category: LocationCategory) {
@@ -71,9 +83,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   selectedLocationId,
   selectedMazgalId,
   partyLocationId,
+  protagonist,
+  activeWeatherKey = 'mist',
   fogOfWar,
-  showMist,
-  mistDensity,
   showRoutes,
   soundEnabled,
   isPlacingPin,
@@ -82,11 +94,12 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   onSelectMazgal,
   onPlacePinAt,
   onToggleFogOfWar,
-  onToggleMist,
-  onMistDensityChange,
   onToggleRoutes,
   onToggleSound,
+  onChangeTravelMode,
+  onWeatherChanged,
   onOpenInspector,
+  onOpenProtagonist,
 }) => {
   const wrapperRef = useRef<HTMLElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -234,34 +247,6 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
           <button
             type="button"
-            onClick={onToggleMist}
-            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-              showMist
-                ? 'bg-[#67C7C0]/20 text-[#9CE3DD] border border-[#67C7C0]/35'
-                : 'bg-[#1D2B25] text-[#C8D0CB] hover:text-[#F3EBD8]'
-            }`}
-          >
-            <Wind className="h-3.5 w-3.5" />
-            Atmosfer Sisi
-          </button>
-
-          {showMist && (
-            <label className="hidden sm:inline-flex items-center gap-2 px-2 text-xs text-[#A3B1AA]">
-              <span className="whitespace-nowrap">Yoğunluk</span>
-              <input
-                type="range"
-                min={10}
-                max={90}
-                value={mistDensity}
-                onChange={(e) => onMistDensityChange(Number(e.target.value))}
-                aria-label="Sis yoğunluğu"
-                className="h-1.5 w-20 accent-[#67C7C0] cursor-pointer"
-              />
-            </label>
-          )}
-
-          <button
-            type="button"
             onClick={onToggleRoutes}
             className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               showRoutes
@@ -285,6 +270,65 @@ export const MapViewport: React.FC<MapViewportProps> = ({
             <Grid className="h-3.5 w-3.5" />
             {showGrid ? 'Mazgal Sistemi: Açık' : 'Mazgal Sistemi'}
           </button>
+
+          {onChangeTravelMode && protagonist && (
+            <div className="flex flex-wrap items-center gap-1.5 border-l border-[#D4A853]/18 pl-2">
+              <select
+                aria-label="Yürüyüş temposu"
+                value={protagonist.travelPace ?? 'normal'}
+                onChange={(e) =>
+                  onChangeTravelMode(
+                    e.target.value as TravelPace,
+                    protagonist.travelTransport ?? 'foot'
+                  )
+                }
+                className="rounded-md border border-[#D4A853]/25 bg-[#101A16] px-2 py-1 text-xs text-[#EDE6D6] focus:border-[#D4A853] focus:outline-none cursor-pointer"
+              >
+                <option value="stealth">Tempo: Gizli</option>
+                <option value="normal">Tempo: Normal</option>
+                <option value="forced">Tempo: Zorlu</option>
+              </select>
+
+              <select
+                aria-label="Ulaşım aracı"
+                value={protagonist.travelTransport ?? 'foot'}
+                onChange={(e) =>
+                  onChangeTravelMode(
+                    protagonist.travelPace ?? 'normal',
+                    e.target.value as TravelTransport
+                  )
+                }
+                className="rounded-md border border-[#D4A853]/25 bg-[#101A16] px-2 py-1 text-xs text-[#EDE6D6] focus:border-[#D4A853] focus:outline-none cursor-pointer"
+              >
+                <option value="foot">Yaya</option>
+                <option value="mule">Katır / Araba</option>
+                <option value="boat">Kayık / Tekne</option>
+              </select>
+            </div>
+          )}
+
+          {onWeatherChanged && (
+            <select
+              aria-label="Bölge hava durumu"
+              value={activeWeatherKey}
+              onChange={(e) => {
+                const val = e.target.value as WeatherConditionKey;
+                const names: Record<WeatherConditionKey, string> = {
+                  clear: 'Açık / Soğuk Rüzgar',
+                  mist: 'Yoğun Doğu Sisi',
+                  rain: 'Soğuk Orman Yağmuru',
+                  storm: 'Sert Vadi Fırtınası',
+                };
+                onWeatherChanged(val, names[val]);
+              }}
+              className="rounded-md border border-[#67C7C0]/25 bg-[#101A16] px-2 py-1 text-xs text-[#9CE3DD] focus:border-[#67C7C0] focus:outline-none cursor-pointer"
+            >
+              <option value="clear">Hava: Açık</option>
+              <option value="mist">Hava: Yoğun Sis</option>
+              <option value="rain">Hava: Yağmur</option>
+              <option value="storm">Hava: Fırtına</option>
+            </select>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -485,23 +529,6 @@ export const MapViewport: React.FC<MapViewportProps> = ({
             </svg>
           )}
 
-          {/* Atmospheric Mist Layer */}
-          {showMist && (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 overflow-hidden"
-              style={{ opacity: mistDensity / 100 }}
-            >
-              <div
-                className="mist-layer absolute -inset-12"
-                style={{
-                  background:
-                    'radial-gradient(circle at 22% 28%, rgba(203, 224, 224, 0.34), transparent 44%), radial-gradient(circle at 68% 42%, rgba(173, 212, 212, 0.28), transparent 48%), radial-gradient(circle at 78% 78%, rgba(200, 220, 224, 0.32), transparent 42%)',
-                }}
-              />
-            </div>
-          )}
-
           {/* Fog of War Mask */}
           {fogOfWar && (
             <svg
@@ -539,6 +566,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({
             const Icon = getCategoryIcon(loc.category);
             const isSelected = loc.id === selectedLocationId;
             const isPartyHere = loc.id === partyLocationId;
+            const contactsHere = (protagonist?.contacts ?? []).filter(
+              (c) => c.partyRelation === 'independent' && c.currentLocationId === loc.id
+            );
 
             return (
               <button
@@ -586,11 +616,98 @@ export const MapViewport: React.FC<MapViewportProps> = ({
                   }`}
                 >
                   {loc.name}
-                  {isPartyHere ? ' · Grup Burada' : ''}
+                  {isPartyHere ? ' · Sen Buradasın' : ''}
+                  {contactsHere.length > 0 ? ` · ${contactsHere.map((c) => c.name).join(', ')}` : ''}
                 </span>
               </button>
             );
           })}
+
+          {/* Autonomous Roaming Caravans, Patrols & Raiders */}
+          {(protagonist?.roamingUnits ?? []).map((unit) => {
+            if (fogOfWar) {
+              const targetLoc = locations.find((l) => l.id === unit.currentLocationId);
+              if (targetLoc && !targetLoc.discovered && unit.mazgalId !== protagonist?.mazgalId) {
+                return null;
+              }
+            }
+            const UnitIcon =
+              unit.kind === 'raider' ? Skull : unit.kind === 'caravan' ? Truck : Shield;
+            const colorClass =
+              unit.kind === 'raider'
+                ? 'border-[#DC6B6B]/85 bg-[#2A1416]/95 text-[#F2B8B8]'
+                : unit.kind === 'caravan'
+                ? 'border-[#D4A853]/85 bg-[#241E12]/95 text-[#E8C472]'
+                : 'border-[#67C7C0]/85 bg-[#122622]/95 text-[#9CE3DD]';
+
+            // Offset slightly if currently parked at a settlement so it doesn't hide the town icon
+            const atLoc = locations.some(
+              (l) => Math.hypot(unit.x - l.x, unit.y - l.y) < 1.2
+            );
+            return (
+              <button
+                key={unit.id}
+                type="button"
+                data-pin="true"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectMazgal(unit.mazgalId);
+                }}
+                style={{
+                  left: `${unit.x}%`,
+                  top: `${unit.y}%`,
+                  transform: atLoc ? 'translate(55%, -90%)' : 'translate(-50%, -50%)',
+                }}
+                aria-label={`${unit.name} · ${unit.statusNote}`}
+                className="group absolute z-[18] flex items-center justify-center cursor-pointer hover:z-30"
+              >
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded border shadow-md transition-transform group-hover:scale-115 ${colorClass}`}
+                >
+                  <UnitIcon className="h-2.5 w-2.5" />
+                </span>
+                <span className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 rounded border border-[#D4A853]/40 bg-[#0D1512]/95 px-2 py-1 text-[10px] leading-tight text-[#EDE6D6] whitespace-nowrap shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
+                  <strong className="block text-[#F8F3E6]">{unit.name}</strong>
+                  <span className="text-[#9AA8A1]">{unit.statusNote}</span>
+                </span>
+              </button>
+            );
+          })}
+
+          {/* Individual Protagonist Token (Visible even on open mazgal tiles!) */}
+          {protagonist && (
+            <button
+              type="button"
+              data-pin="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenProtagonist?.();
+              }}
+              style={{
+                left: `${protagonist.x}%`,
+                top: `${protagonist.y}%`,
+                transform: 'translate(-50%, -50%)',
+              }}
+              aria-label={`${protagonist.name} (Sen) konumunu aç`}
+              className="group absolute z-30 flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#67C7C0]"
+            >
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-1.5 rounded-full border-2 border-[#67C7C0] shadow-[0_0_12px_rgba(103,199,192,0.75)]"
+              />
+              {!protagonist.locationId && (
+                <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[#F8F3E6] bg-[#132924] text-[#67C7C0] shadow-lg">
+                  <User className="h-3.5 w-3.5" />
+                </span>
+              )}
+              {protagonist.locationId && (
+                <span className="h-2.5 w-2.5 rounded-full bg-[#67C7C0] ring-2 ring-[#0D1512] translate-x-3 -translate-y-3" />
+              )}
+              <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 rounded border border-[#67C7C0]/60 bg-[#0D1512]/95 px-2 py-1 text-[10px] font-semibold text-[#9CE3DD] whitespace-nowrap shadow-md opacity-0 group-hover:opacity-100 transition-opacity">
+                {protagonist.name} (Sen) · Mazgal {protagonist.mazgalId}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Cartographic Scale Bar (Hover-free compact scale reference) */}
@@ -616,10 +733,24 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           <span>{locations.filter((l) => l.discovered).length} / {locations.length} Konum Keşfedildi</span>
           <span aria-hidden="true">·</span>
           <span>
-            Aktif Grup Noktası: <strong className="font-medium text-[#EDE6D6]">{partyLoc?.name ?? 'Belirtilmedi'}</strong>
+            Konumun:{' '}
+            <strong className="font-medium text-[#EDE6D6]">
+              {protagonist
+                ? partyLoc?.name ?? `Açık Arazi (Mazgal ${protagonist.mazgalId})`
+                : partyLoc?.name ?? 'Belirtilmedi'}
+            </strong>
           </span>
         </div>
         <div className="flex items-center gap-4">
+          {onOpenProtagonist && !isExpanded && (
+            <button
+              type="button"
+              onClick={onOpenProtagonist}
+              className="font-medium text-[#67C7C0] hover:text-[#9CE3DD] cursor-pointer"
+            >
+              Karakterim ({protagonist?.name ?? 'Sen'})
+            </button>
+          )}
           {onOpenInspector && !isExpanded && (
             <button
               type="button"

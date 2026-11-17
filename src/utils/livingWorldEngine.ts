@@ -1,5 +1,7 @@
 import type {
   MapLocation,
+  MapRoute,
+  ProtagonistState,
   SettlementArchetype,
   SettlementEventRecord,
   SettlementLivingState,
@@ -13,6 +15,7 @@ import {
   generateProceduralRumorText,
   type ProceduralSceneCard,
 } from './proceduralWorldDeck';
+import { getFactionForLocation } from './protagonistEngine';
 
 export const SIMULATION_TICK_MS = 12 * 60 * 60 * 1000; // 12 saatlik dünya adımı
 const MAX_TICKS_PER_JUMP = 16; // Tek sıçramada en fazla 16 adım (8 gün)
@@ -103,9 +106,9 @@ const ARCHETYPE_BLUEPRINTS: Record<SettlementArchetype, ArchetypeBlueprint> = {
         happy: 'Sabah borusuyla kapılar açıldı; Kulova’dan gelen yün arabaları ve Derebaşı kerestecileri avluda pazar kurdu.',
       },
       midday: {
-        peaceful: 'Demirci Mira’nın örsünden çekiç sesleri yükseliyor; sınır erleri geçiş belgelerini kontrol ediyor.',
+        peaceful: 'Demirci Mira’nın örsünden çekiç sesleri yükseliyor; taş meydandaki esir ve köle pazarında kâtip Varen yeni borçlu sözleşmelerini mühürlüyor.',
         fearful: 'Avluda silah talimi hızlandırılmış; hancı Torin erzak fıçılarını sur içine çektiriyor.',
-        happy: 'Pazar tezgahları dolu; tüccarlar Gümüş Köprü’ye gidecek kervan için rehber kiralıyor.',
+        happy: 'Pazar ve köle tezgâhları dolu; tüccarlar Gümüş Köprü’ye gidecek kervan için rehber ve hamal kiralıyor.',
       },
       evening: {
         peaceful: 'Devriye atları ahırlara çekiliyor, sur meşaleleri yakılıyor ve handa sıcak yahni kazanları kaynıyor.',
@@ -138,8 +141,8 @@ const ARCHETYPE_BLUEPRINTS: Record<SettlementArchetype, ArchetypeBlueprint> = {
       },
       {
         id: 'bf-rum-4',
-        text: 'Kulova köyünden gelen yeni yün balyaları garnizonun kışlık pelerin ihtiyacını fazlasıyla karşılamış.',
-        moodImpact: +6,
+        text: 'Külköy esir pazarına batıdan iki borçlu arabacı ile devriyelerin yakaladığı üç kuzeyli haydut getirilmiş.',
+        moodImpact: +2,
       },
     ],
     problems: [
@@ -1353,7 +1356,13 @@ const LOCATION_LIVING_SEEDS: Record<string, LocationLivingSeed> = {
     populationEstimate: 185,
     unitLabel: 'Kişi',
     morale: 72,
-    establishments: ['Ahşap Palizad Suru', 'Torin’in Sınır Hanı', 'Mira’nın Demirci Ocağı', 'Garnizon Kışlası'],
+    establishments: [
+      'Ahşap Palizad Suru',
+      'Torin’in Sınır Hanı',
+      'Mira’nın Demirci Ocağı',
+      'Garnizon Kışlası',
+      'Sınır Köle ve Tutsak Pazarı',
+    ],
     initialRumor: 'Gümüş Köprü üzerinden gelecek tuz kervanı için kalede iki izci bekleniyor.',
     initialEventTitle: 'Garnizon Sabah Nöbeti Devraldı',
     initialEventDetail: 'Komutan Balthor doğu ve kuzey yollarına ikişer kişilik atlı gözcü çıkardı.',
@@ -1933,10 +1942,13 @@ function simulateSingleLocationTick(
 
 export function advanceLivingLocations(
   locations: MapLocation[],
-  nextTimeMs: number
+  nextTimeMs: number,
+  routes: MapRoute[] = [],
+  protagonist?: ProtagonistState
 ): MapLocation[] {
   const targetTick = Math.floor((nextTimeMs - INITIAL_GAME_TIME_MS) / SIMULATION_TICK_MS);
   let didAnyLocationChange = false;
+  const tickedIds = new Set<string>();
 
   const updated = locations.map((loc) => {
     const ls = loc.livingState;
@@ -1963,6 +1975,21 @@ export function advanceLivingLocations(
       );
     }
 
+    // Protagonist presence subtly stabilizes friendly settlements during time passage
+    if (protagonist && protagonist.locationId === loc.id) {
+      const faction = getFactionForLocation(loc);
+      const rep = protagonist.reputation[faction] ?? 0;
+      if (rep >= 20 && nextState.morale < 96) {
+        const stabilizedMorale = Math.min(96, nextState.morale + 1);
+        nextState = {
+          ...nextState,
+          morale: stabilizedMorale,
+          mood: computeMoodFromMorale(stabilizedMorale),
+        };
+      }
+    }
+
+    tickedIds.add(loc.id);
     didAnyLocationChange = true;
     return {
       ...loc,
@@ -1970,7 +1997,104 @@ export function advanceLivingLocations(
     };
   });
 
-  return didAnyLocationChange ? updated : locations;
+  if (!didAnyLocationChange) return locations;
+
+  // Cross-location neighbor spillover along active map routes
+  if (routes.length === 0) return updated;
+
+  const byId = new Map(updated.map((l) => [l.id, l]));
+  const neighborLookup = new Map<string, string[]>();
+  for (const r of routes) {
+    const listA = neighborLookup.get(r.fromId) ?? [];
+    listA.push(r.toId);
+    neighborLookup.set(r.fromId, listA);
+
+    const listB = neighborLookup.get(r.toId) ?? [];
+    listB.push(r.fromId);
+    neighborLookup.set(r.toId, listB);
+  }
+
+  const timestamp = formatGameDateTime(nextTimeMs);
+  return updated.map((loc) => {
+    const ls = loc.livingState;
+    if (!ls || !ls.enabled || !tickedIds.has(loc.id)) return loc;
+
+    const connectedIds = neighborLookup.get(loc.id) ?? [];
+    if (connectedIds.length === 0) return loc;
+
+    const neighbors = connectedIds
+      .map((cid) => byId.get(cid))
+      .filter((n): n is MapLocation => Boolean(n && n.livingState));
+
+    // Troubled or low-morale connected neighbors spread low-probability rumors/tension
+    const troubledNeighbor = neighbors.find(
+      (n) => (n.livingState?.activeProblems.length ?? 0) > 0 || (n.livingState?.morale ?? 60) <= 38
+    );
+    if (troubledNeighbor && Math.random() < 0.14) {
+      const probTitle = troubledNeighbor.livingState?.activeProblems[0]?.title;
+      const rumorText = probTitle
+        ? `${troubledNeighbor.name} yönünden gelen yolcular "${probTitle}" yüzünden yolun gergin olduğunu anlatıyor.`
+        : `${troubledNeighbor.name} çevresinde halkın tedirgin olduğu ve nöbetlerin sıkılaştığı duyulmuş.`;
+      if (!ls.rumors.includes(rumorText)) {
+        const nextMorale = Math.max(15, ls.morale - 2);
+        const hook = probTitle
+          ? `${troubledNeighbor.name} tarafındaki "${probTitle}" durumunu yerinde araştırmak.`
+          : `${troubledNeighbor.name} yolundaki gerginliğin nedenini öğrenmek.`;
+        return {
+          ...loc,
+          livingState: {
+            ...ls,
+            morale: nextMorale,
+            mood: computeMoodFromMorale(nextMorale),
+            rumors: [rumorText, ...ls.rumors].slice(0, MAX_RUMORS),
+            dynamicHooks: pushUniqueHook(ls.dynamicHooks, hook),
+            chronicle: pushChronicle(ls.chronicle, {
+              id: `ev-spill-${loc.id}-${targetTick}`,
+              timestamp,
+              kind: 'Dedikodu',
+              title: `${troubledNeighbor.name} Haberleri Ulaştı`,
+              detail: rumorText,
+              moodImpact: -2,
+              questHook: hook,
+            }),
+          },
+        };
+      }
+    }
+
+    // Calm high-morale neighbors occasionally bring positive trade rumors
+    const thrivingNeighbor = neighbors.find(
+      (n) =>
+        n.category === 'village' &&
+        (n.livingState?.morale ?? 0) >= 80 &&
+        (n.livingState?.activeProblems.length ?? 0) === 0
+    );
+    if (thrivingNeighbor && Math.random() < 0.08) {
+      const rumorText = `${thrivingNeighbor.name} yönünde yolların açık olduğu, kervan ve takasın canlandığı konuşuluyor.`;
+      if (!ls.rumors.includes(rumorText)) {
+        const nextMorale = Math.min(96, ls.morale + 2);
+        return {
+          ...loc,
+          livingState: {
+            ...ls,
+            morale: nextMorale,
+            mood: computeMoodFromMorale(nextMorale),
+            rumors: [rumorText, ...ls.rumors].slice(0, MAX_RUMORS),
+            chronicle: pushChronicle(ls.chronicle, {
+              id: `ev-spill-ok-${loc.id}-${targetTick}`,
+              timestamp,
+              kind: 'Dedikodu',
+              title: `${thrivingNeighbor.name} Yolundan İyi Haber`,
+              detail: rumorText,
+              moodImpact: +2,
+            }),
+          },
+        };
+      }
+    }
+
+    return loc;
+  });
 }
 
 export function resolveSettlementProblemByParty(
@@ -2040,3 +2164,92 @@ export function recordProceduralSceneOnLocation(
     },
   };
 }
+
+export function applyExternalMoraleShift(
+  location: MapLocation,
+  moraleDelta: number,
+  gameTimeMs: number,
+  noteTitle?: string,
+  noteDetail?: string
+): MapLocation {
+  const ls = location.livingState;
+  if (!ls || (!moraleDelta && !noteDetail)) return location;
+
+  const timestamp = formatGameDateTime(gameTimeMs);
+  const nextMorale = Math.max(15, Math.min(98, ls.morale + moraleDelta));
+
+  return {
+    ...location,
+    livingState: {
+      ...ls,
+      morale: nextMorale,
+      mood: computeMoodFromMorale(nextMorale),
+      chronicle: noteDetail
+        ? pushChronicle(ls.chronicle, {
+            id: `ev-protag-${Date.now()}`,
+            timestamp,
+            kind: moraleDelta >= 0 ? 'Olay' : 'Sorun',
+            title: noteTitle ?? 'Yolcu Etkisi',
+            detail: noteDetail,
+            moodImpact: moraleDelta,
+          })
+        : ls.chronicle,
+    },
+  };
+}
+
+export function recordRoamingArrivalOnLocation(
+  location: MapLocation,
+  unitName: string,
+  unitKind: 'patrol' | 'caravan' | 'raider' | 'scout',
+  detail: string,
+  moraleDelta: number,
+  gameTimeMs: number,
+  spawnRaidProblem = false
+): MapLocation {
+  const ls = location.livingState;
+  if (!ls || !ls.enabled) return location;
+
+  const timestamp = formatGameDateTime(gameTimeMs);
+  const nextMorale = Math.max(15, Math.min(98, ls.morale + moraleDelta));
+  let activeProblems = ls.activeProblems;
+
+  if (spawnRaidProblem && activeProblems.length < 2 && unitKind === 'raider') {
+    const alreadyRaid = activeProblems.some((p) => p.title.includes(unitName));
+    if (!alreadyRaid) {
+      activeProblems = [
+        ...activeProblems,
+        {
+          id: `prob-roam-${location.id}-${Date.now()}`,
+          templateId: `roam-raid-${unitKind}`,
+          title: `${unitName} Tacizi`,
+          description: `${unitName} yerleşimin dış patikalarında erzak ve gümüş yoklaması yapıyor.`,
+          severity: 'Orta',
+          startedAt: timestamp,
+          attempts: 0,
+        },
+      ];
+    }
+  }
+
+  return {
+    ...location,
+    livingState: {
+      ...ls,
+      morale: nextMorale,
+      mood: computeMoodFromMorale(nextMorale),
+      activeProblems,
+      rumors: [detail, ...ls.rumors.filter((r) => r !== detail)].slice(0, MAX_RUMORS),
+      chronicle: pushChronicle(ls.chronicle, {
+        id: `ev-roam-${location.id}-${Date.now()}-${Math.floor(Math.random() * 99)}`,
+        timestamp,
+        kind: unitKind === 'raider' ? 'Sorun' : 'Olay',
+        title: `${unitName} Bölgeye Ulaştı`,
+        detail,
+        moodImpact: moraleDelta,
+      }),
+    },
+  };
+}
+
+

@@ -13,7 +13,7 @@ export const REGION_INFO = {
   title: 'Kadim Sis Ormanı',
   continentPosition: 'Kıtanın Doğu Sınırı · 300 Fersahlık Sınır Bölgesi',
   summary:
-    'Kıtanın doğusunda sıradağlardan okyanusa uzanan soğuk, nemli ve yoğun sisli büyük orman bölgesi. Batıda insan sınır kaleleri ve küçük köyler, iç vadilerde çekingen elf ve hayvan kulaklı klan yerleşimleri, kayalık eteklerde ilkel goblin-kobold inleri ve aralarında vahşi doğa alanları yer alır.',
+    'Kıtanın doğusunda sıradağlardan okyanusa uzanan soğuk, nemli ve yoğun sisli büyük orman bölgesi. Batıda insan sınır kaleleri ve küçük köyler (insan yerleşimlerinde borçlu ve savaş tutsağı köleliği yasal ve olağan bir kurumdur), iç vadilerde çekingen elf ve hayvan kulaklı klan yerleşimleri, kayalık eteklerde ilkel goblin-kobold inleri yer alır.',
 };
 
 export const CATEGORY_LABELS: Record<LocationCategory, string> = {
@@ -38,14 +38,15 @@ const BASE_LOCATIONS: MapLocation[] = [
     discovered: true,
     imageUrl: villageImg,
     playerLore:
-      'Büyük orman kuşağına girmeden önceki son surlu insan yerleşimi. Ahşap palizadların içinde oduncular, tuz kervanları ve orman rehberleri konaklar; doğuya giden yolcular erzak ve kalın pelerinlerini buradan temin eder.',
+      'Büyük orman kuşağına girmeden önceki en büyük surlu insan yerleşimi. Ahşap palizadların içinde oduncular, tuz kervanları ve orman rehberleri konaklar. İnsan sınır yasaları gereği Külköy taş meydanında borçlu sözleşmeleri, yakalanan haydutlar ve savaş tutsaklarının alınıp satıldığı yasal bir köle ve esir pazarı da olağan düzenin parçasıdır.',
     gmSecret:
-      'Komutan Balthor, güneydeki goblin baskınlarının artması nedeniyle demir sevkiyatını korumak için paralı izci arıyor. Tüccar loncası ise Bozpençe klanından alınan kürklerin fiyatını gizlice düşürmeye çalışıyor.',
+      'Komutan Balthor, güneydeki goblin baskınlarının artması nedeniyle demir sevkiyatını korumak için paralı izci arıyor. Kale mübaşiri ve köle kâtibi Varen ise yakalanan kuzey haydutları için kale başına düzenli alım bedeli ödüyor; tüccar loncası da Bozpençe kürk fiyatlarını gizlice düşürmeye çalışıyor.',
     hooks: [
       'Gümüş Köprü üzerinden gelecek kervana eşlik edip yolu kontrol etmek',
       'Kuzeydeki Batakhan köyünden haftalardır vergi arabası dönmediğini araştırmak',
+      'Külköy Köle ve Tutsak Pazarından ücret gerektirmeyen bir bağlı muhafız/hizmetkâr edinmek veya yakalanan haydutları satmak',
     ],
-    npcsOrFoes: ['Komutan Balthor (Eski Yüzbaşı)', 'Hancı Torin', 'Demirci Mira'],
+    npcsOrFoes: ['Komutan Balthor (Eski Yüzbaşı)', 'Hancı Torin', 'Demirci Mira', 'Köle Kâtibi Varen'],
     loot: ['Yağlı Fırtına Feneri', 'Mühürlü Sınır Geçiş Belgesi', '15 Günlük Kuru Erzak'],
   },
   {

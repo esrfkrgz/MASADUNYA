@@ -19,6 +19,7 @@ import type {
   MapRoute,
   MazgalCell,
   MistWeather,
+  ProtagonistState,
 } from '../types/map';
 import {
   calculateExpeditionPlan,
@@ -41,17 +42,38 @@ import {
   type ProceduralSceneCard,
   type SceneCategoryFilter,
 } from '../utils/proceduralWorldDeck';
+import { getProtagonistModifiers } from '../utils/protagonistEngine';
 import { soundFx } from '../utils/sound';
+import {
+  type EncounterChoiceId,
+  buildInteractiveSummaryForEncounter,
+  buildInteractiveSummaryForScene,
+} from '../utils/worldSystemsEngine';
 
 interface EncounterStudioProps {
   locations: MapLocation[];
   routes: MapRoute[];
   mazgalCells: MazgalCell[];
   partyLocationId: string;
+  protagonist?: ProtagonistState;
+  activeWeatherKey?: WeatherConditionKey;
   gameTimeMs: number;
   resetKey?: number;
   onEncounterRolled?: (encounter: ForestEncounter) => void;
   onRecordProceduralScene?: (scene: ProceduralSceneCard, advanceHours: number) => void;
+  onApplyEncounterOutcome?: (
+    result: 'victory' | 'costly' | 'flee',
+    title: string,
+    locationId?: string
+  ) => void;
+  onResolveInteractiveChoice?: (
+    choice: EncounterChoiceId,
+    title: string,
+    dc: number,
+    locationId?: string
+  ) => string;
+  onWeatherChanged?: (weatherKey: WeatherConditionKey, label?: string) => void;
+  onMeetProceduralNpc?: (npc: ProceduralNpcCard, locationId?: string) => void;
 }
 
 const QUICK_DICE = ['1d4', '1d6', '1d8', '1d10', '1d12', '1d20', '2d6', '1d100'];
@@ -61,10 +83,16 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
   routes,
   mazgalCells,
   partyLocationId,
+  protagonist,
+  activeWeatherKey = 'mist',
   gameTimeMs,
   resetKey = 0,
   onEncounterRolled,
   onRecordProceduralScene,
+  onApplyEncounterOutcome,
+  onResolveInteractiveChoice,
+  onWeatherChanged,
+  onMeetProceduralNpc,
 }) => {
   // 1) Dice & Check Engine State
   const [diceExpr, setDiceExpr] = useState('1d20');
@@ -86,15 +114,22 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
     locations.find((l) => l.id === 'loc-elf-koyu')?.id ?? locations[1]?.id ?? ''
   );
   const [partySize, setPartySize] = useState<number>(4);
-  const [pace, setPace] = useState<TravelPace>('normal');
-  const [transport, setTransport] = useState<TravelTransport>('foot');
-  const [weatherKey, setWeatherKey] = useState<WeatherConditionKey>('mist');
+  const [pace, setPace] = useState<TravelPace>(protagonist?.travelPace ?? 'normal');
+  const [transport, setTransport] = useState<TravelTransport>(
+    protagonist?.travelTransport ?? 'foot'
+  );
+  const [weatherKey, setWeatherKey] = useState<WeatherConditionKey>(activeWeatherKey);
   const [regionalWeather, setRegionalWeather] = useState<RegionalWeatherRoll | null>(null);
 
   // 4) Classic 1d12 Forest Encounter State
   const [lastRoll, setLastRoll] = useState<number | null>(null);
   const [activeEncounter, setActiveEncounter] = useState<ForestEncounter>(FOREST_ENCOUNTERS[0]);
   const [activeWeather, setActiveWeather] = useState<MistWeather>(MIST_WEATHERS[0]);
+  const [encounterOutcomeToast, setEncounterOutcomeToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWeatherKey(activeWeatherKey);
+  }, [activeWeatherKey]);
 
   useEffect(() => {
     if (partyLocationId) {
@@ -113,6 +148,7 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
     setGeneratedNpc(null);
     setRegionalWeather(null);
     setSceneSavedToast(null);
+    setEncounterOutcomeToast(null);
     setSceneLocationId('loc-kuldere');
     setCalcFromId('loc-kuldere');
   }, [resetKey]);
@@ -156,7 +192,8 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
       selectedSceneLoc,
       gameTimeMs,
       sceneFilter,
-      mazgal?.safetyScore ?? 50
+      mazgal?.safetyScore ?? 50,
+      protagonist?.activeWorldWave?.dangerShift ?? 0
     );
     setActiveScene(scene);
     setSceneSavedToast(null);
@@ -174,6 +211,7 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
     const rolled = rollRegionalWeather(selectedSceneLoc, gameTimeMs);
     setRegionalWeather(rolled);
     setWeatherKey(rolled.weatherKey);
+    onWeatherChanged?.(rolled.weatherKey, rolled.name);
   };
 
   const handleCommitSceneToLocation = (advanceHours: number) => {
@@ -196,10 +234,20 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
     setLastRoll(d12);
     setActiveEncounter(rolledEncounter);
     setActiveWeather(MIST_WEATHERS[weatherIdx]);
+    setEncounterOutcomeToast(null);
     onEncounterRolled?.(rolledEncounter);
   };
 
   const latestRoll = rollHistory[0];
+  const protagLoc = protagonist?.locationId
+    ? locations.find((l) => l.id === protagonist.locationId)
+    : undefined;
+  const protagCell = protagonist
+    ? mazgalCells.find((c) => c.id === protagonist.mazgalId)
+    : undefined;
+  const protagMods = protagonist
+    ? getProtagonistModifiers(protagonist, protagLoc, protagCell)
+    : null;
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-8 px-4 py-8 sm:px-6">
@@ -226,6 +274,32 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
           Hızlı Yol Karşılaşması (1d12)
         </button>
       </div>
+
+      {protagonist && protagMods && (
+        <div className="rounded-lg border border-[#67C7C0]/25 bg-[#111D19] px-4 py-3 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 tabular-nums">
+              <span className="font-semibold text-[#67C7C0]">
+                Karakter Etkin ({protagonist.name} · {protagonist.mood})
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="text-[#EDE6D6]">
+                Konum: {protagLoc?.name ?? `Mazgal ${protagonist.mazgalId}`}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-[#D4A853]">
+                Fiziksel {protagMods.physicalMod >= 0 ? `+${protagMods.physicalMod}` : protagMods.physicalMod} · Sosyal{' '}
+                {protagMods.socialMod >= 0 ? `+${protagMods.socialMod}` : protagMods.socialMod} · Algı{' '}
+                {protagMods.perceptionMod >= 0 ? `+${protagMods.perceptionMod}` : protagMods.perceptionMod}
+              </span>
+            </div>
+            <span className="text-[#9AA8A1]">
+              {protagMods.factionLabel}: {protagMods.repSummary}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-[#B7C4BE]">{protagMods.notes.join(' ')}</p>
+        </div>
+      )}
 
       {/* SECTION 1: Polyhedral Dice Engine + Regional Weather */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -546,27 +620,111 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
                   </div>
                 </div>
 
-                {onRecordProceduralScene && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#D4A853]/12 pt-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleCommitSceneToLocation(0)}
-                        className="rounded border border-[#D4A853]/30 bg-[#192621] px-3 py-1.5 text-xs font-medium text-[#EDE6D6] hover:border-[#D4A853]/65 cursor-pointer"
-                      >
-                        Konum Kaydına İşle
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCommitSceneToLocation(2)}
-                        className="rounded border border-[#67C7C0]/35 bg-[#132520] px-3 py-1.5 text-xs font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
-                      >
-                        İşle ve Saati +2 İlerlet
-                      </button>
-                    </div>
-                    {sceneSavedToast && (
-                      <span className="text-xs text-[#67C7C0]">{sceneSavedToast}</span>
+                {(onRecordProceduralScene || onApplyEncounterOutcome || onResolveInteractiveChoice) && (
+                  <div className="space-y-3 border-t border-[#D4A853]/12 pt-3">
+                    {onResolveInteractiveChoice && (
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] font-semibold text-[#D4A853]">
+                          Motorla Etkileşimli Çözüm ({buildInteractiveSummaryForScene(activeScene).dc} DC)
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const { title, dc } = buildInteractiveSummaryForScene(activeScene);
+                              const msg = onResolveInteractiveChoice('attack_force', title, dc, activeScene.locationId);
+                              setSceneSavedToast(msg);
+                            }}
+                            className="rounded border border-[#D4A853]/35 bg-[#1E271E] px-2.5 py-1 text-xs font-medium text-[#E8C472] hover:border-[#D4A853] cursor-pointer"
+                          >
+                            Saldır / Bastır
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const { title, dc } = buildInteractiveSummaryForScene(activeScene);
+                              const msg = onResolveInteractiveChoice('negotiate_intimidate', title, dc, activeScene.locationId);
+                              setSceneSavedToast(msg);
+                            }}
+                            className="rounded border border-[#67C7C0]/35 bg-[#132520] px-2.5 py-1 text-xs font-medium text-[#9CE3DD] hover:border-[#67C7C0] cursor-pointer"
+                          >
+                            Pazarlık / Gözdağı
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const { title, dc } = buildInteractiveSummaryForScene(activeScene);
+                              const msg = onResolveInteractiveChoice('stealth_evade', title, dc, activeScene.locationId);
+                              setSceneSavedToast(msg);
+                            }}
+                            className="rounded border border-[#D4A853]/25 bg-[#192621] px-2.5 py-1 text-xs font-medium text-[#D9D3C4] hover:border-[#D4A853]/60 cursor-pointer"
+                          >
+                            Siste Gizlen
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const { title, dc } = buildInteractiveSummaryForScene(activeScene);
+                              const msg = onResolveInteractiveChoice('dirty_trick', title, dc, activeScene.locationId);
+                              setSceneSavedToast(msg);
+                            }}
+                            className="rounded border border-[#DC6B6B]/35 bg-[#241819] px-2.5 py-1 text-xs font-medium text-[#E89898] hover:border-[#DC6B6B] cursor-pointer"
+                          >
+                            Kirli Oyun / Pusu
+                          </button>
+                        </div>
+                      </div>
                     )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap gap-2">
+                        {onRecordProceduralScene && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleCommitSceneToLocation(0)}
+                              className="rounded border border-[#D4A853]/30 bg-[#192621] px-3 py-1.5 text-xs font-medium text-[#EDE6D6] hover:border-[#D4A853]/65 cursor-pointer"
+                            >
+                              Konum Kaydına İşle
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCommitSceneToLocation(2)}
+                              className="rounded border border-[#67C7C0]/35 bg-[#132520] px-3 py-1.5 text-xs font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                            >
+                              İşle ve Saati +2 İlerlet
+                            </button>
+                          </>
+                        )}
+                        {onApplyEncounterOutcome && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onApplyEncounterOutcome('victory', activeScene.title, activeScene.locationId);
+                                setSceneSavedToast('Sonuç karakterine ve bölge itibarına yansıtıldı.');
+                              }}
+                              className="rounded border border-[#67C7C0]/40 bg-[#132520] px-3 py-1.5 text-xs font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                            >
+                              Başardım (+Gümüş/İtibar)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onApplyEncounterOutcome('costly', activeScene.title, activeScene.locationId);
+                                setSceneSavedToast('Yara ve yorgunluk karakterine işlendi.');
+                              }}
+                              className="rounded border border-[#DC6B6B]/35 bg-[#241819] px-3 py-1.5 text-xs font-medium text-[#E89898] hover:bg-[#2E1E1F] cursor-pointer"
+                            >
+                              Zorlandım (-Can/Zindelik)
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {sceneSavedToast && (
+                        <span className="text-xs text-[#67C7C0]">{sceneSavedToast}</span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -608,6 +766,18 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
                   <p>
                     <strong className="text-[#9AA8A1]">Üzerindeki Eşya:</strong> {generatedNpc.carriedItem}
                   </p>
+                  {onMeetProceduralNpc && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onMeetProceduralNpc(generatedNpc, sceneLocationId);
+                        setSceneSavedToast(`${generatedNpc.name} tanıdıklarına ve yaşayan dünyaya eklendi.`);
+                      }}
+                      className="mt-2 w-full rounded border border-[#67C7C0]/40 bg-[#132520] px-3 py-1.5 text-xs font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                    >
+                      Tanış ve İlişkilere Ekle
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -704,7 +874,11 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
             Hava Koşulu
             <select
               value={weatherKey}
-              onChange={(e) => setWeatherKey(e.target.value as WeatherConditionKey)}
+              onChange={(e) => {
+                const next = e.target.value as WeatherConditionKey;
+                setWeatherKey(next);
+                onWeatherChanged?.(next);
+              }}
               className="mt-1.5 w-full rounded-md border border-[#D4A853]/25 bg-[#0F1815] px-2.5 py-2 text-xs text-[#F8F3E6] focus:border-[#D4A853] focus:outline-none"
             >
               <option value="clear">Açık / Rüzgarlı (1.0x)</option>
@@ -840,6 +1014,104 @@ export const EncounterStudio: React.FC<EncounterStudioProps> = ({
             <p className="mt-1 text-[#D4A853]">{activeEncounter.reward}</p>
           </div>
         </div>
+
+        {(onApplyEncounterOutcome || onResolveInteractiveChoice) && (
+          <div className="space-y-3 border-t border-[#D4A853]/12 pt-3">
+            {onResolveInteractiveChoice && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-[#D4A853]">
+                  Karşılaşmayı Motorla Çöz (DC {buildInteractiveSummaryForEncounter(activeEncounter).dc})
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { title, dc } = buildInteractiveSummaryForEncounter(activeEncounter);
+                      const msg = onResolveInteractiveChoice('attack_force', title, dc, partyLocationId);
+                      setEncounterOutcomeToast(msg);
+                    }}
+                    className="rounded border border-[#D4A853]/35 bg-[#1E271E] px-2.5 py-1 text-xs font-medium text-[#E8C472] hover:border-[#D4A853] cursor-pointer"
+                  >
+                    Saldır / Bastır
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { title, dc } = buildInteractiveSummaryForEncounter(activeEncounter);
+                      const msg = onResolveInteractiveChoice('negotiate_intimidate', title, dc, partyLocationId);
+                      setEncounterOutcomeToast(msg);
+                    }}
+                    className="rounded border border-[#67C7C0]/35 bg-[#132520] px-2.5 py-1 text-xs font-medium text-[#9CE3DD] hover:border-[#67C7C0] cursor-pointer"
+                  >
+                    Pazarlık / Gözdağı
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { title, dc } = buildInteractiveSummaryForEncounter(activeEncounter);
+                      const msg = onResolveInteractiveChoice('stealth_evade', title, dc, partyLocationId);
+                      setEncounterOutcomeToast(msg);
+                    }}
+                    className="rounded border border-[#D4A853]/25 bg-[#192621] px-2.5 py-1 text-xs font-medium text-[#D9D3C4] hover:border-[#D4A853]/60 cursor-pointer"
+                  >
+                    Siste Gizlen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const { title, dc } = buildInteractiveSummaryForEncounter(activeEncounter);
+                      const msg = onResolveInteractiveChoice('dirty_trick', title, dc, partyLocationId);
+                      setEncounterOutcomeToast(msg);
+                    }}
+                    className="rounded border border-[#DC6B6B]/35 bg-[#241819] px-2.5 py-1 text-xs font-medium text-[#E89898] hover:border-[#DC6B6B] cursor-pointer"
+                  >
+                    Kirli Oyun / Pusu
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {onApplyEncounterOutcome && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onApplyEncounterOutcome('victory', activeEncounter.title, partyLocationId);
+                      setEncounterOutcomeToast('Başarı karakterine ve bulunduğun bölge itibarına işlendi.');
+                    }}
+                    className="rounded border border-[#67C7C0]/40 bg-[#132520] px-3 py-1.5 text-xs font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                  >
+                    Başardım (+Gümüş/İtibar)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onApplyEncounterOutcome('costly', activeEncounter.title, partyLocationId);
+                      setEncounterOutcomeToast('Çatışma yorgunluğu ve hasar karakterine işlendi.');
+                    }}
+                    className="rounded border border-[#DC6B6B]/35 bg-[#241819] px-3 py-1.5 text-xs font-medium text-[#E89898] hover:bg-[#2E1E1F] cursor-pointer"
+                  >
+                    Zorlandım (-Can/Zindelik)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onApplyEncounterOutcome('flee', activeEncounter.title, partyLocationId);
+                      setEncounterOutcomeToast('Geri çekilme kaydı karakter günlüğüne eklendi.');
+                    }}
+                    className="rounded border border-[#D4A853]/25 bg-[#192621] px-3 py-1.5 text-xs font-medium text-[#D9D3C4] hover:border-[#D4A853]/60 cursor-pointer"
+                  >
+                    Geri Çekildim
+                  </button>
+                </div>
+              )}
+              {encounterOutcomeToast && (
+                <span className="text-xs text-[#67C7C0]">{encounterOutcomeToast}</span>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="overflow-hidden rounded-lg border border-[#D4A853]/18 bg-[#141F1B]">

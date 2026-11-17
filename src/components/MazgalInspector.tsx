@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Clock, Compass, Dices, MapPin, RotateCcw, Shield, X } from 'lucide-react';
-import type { MazgalCell, MazgalNeighborSummary } from '../types/map';
+import type { MazgalCell, MazgalNeighborSummary, ProtagonistState } from '../types/map';
 import { INITIAL_GAME_TIME_MS } from '../utils/gameTime';
 import { formatTravelHours } from '../utils/gridEngine';
 import { generateMazgalEvent, type MazgalProceduralEvent } from '../utils/proceduralWorldDeck';
@@ -8,22 +8,31 @@ import { soundFx } from '../utils/sound';
 
 interface MazgalInspectorProps {
   cell: MazgalCell | undefined;
+  protagonist?: ProtagonistState;
   fogOfWar: boolean;
   gameTimeMs?: number;
   resetKey?: number;
   onSelectMazgal: (id: string) => void;
   onStepMazgal?: (fromId: string, nb: MazgalNeighborSummary) => void;
+  onApplyMazgalEvent?: (cell: MazgalCell, ev: MazgalProceduralEvent) => void;
+  onInteractRoamingUnit?: (
+    unitId: string,
+    mode: 'greet_trade' | 'escort_aid' | 'ambush_raid'
+  ) => string;
   onSelectLocation: (id: string) => void;
   onClose: () => void;
 }
 
 export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
   cell,
+  protagonist,
   fogOfWar,
   gameTimeMs = INITIAL_GAME_TIME_MS,
   resetKey = 0,
   onSelectMazgal,
   onStepMazgal,
+  onApplyMazgalEvent,
+  onInteractRoamingUnit,
   onSelectLocation,
   onClose,
 }) => {
@@ -33,10 +42,14 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
   const [journeyFersah, setJourneyFersah] = useState(0);
   const [advanceClockOnStep, setAdvanceClockOnStep] = useState(true);
   const [mazgalEvent, setMazgalEvent] = useState<MazgalProceduralEvent | null>(null);
+  const [mazgalEventApplied, setMazgalEventApplied] = useState(false);
+  const [roamFeedback, setRoamFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     setImgFailed(false);
     setMazgalEvent(null);
+    setMazgalEventApplied(false);
+    setRoamFeedback(null);
     if (!cell) return;
     setJourneyPath((prev) => {
       if (prev.length === 0) return [cell.id];
@@ -58,6 +71,7 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
     setJourneyHours(0);
     setJourneyFersah(0);
     setMazgalEvent(null);
+    setMazgalEventApplied(false);
     setJourneyPath(cell ? [cell.id] : []);
   }, [resetKey]);
 
@@ -182,7 +196,14 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
               type="button"
               onClick={() => {
                 soundFx.playDiceRoll();
-                setMazgalEvent(generateMazgalEvent(cell, gameTimeMs));
+                setMazgalEvent(
+                  generateMazgalEvent(
+                    cell,
+                    gameTimeMs,
+                    protagonist?.activeWorldWave?.dangerShift ?? 0
+                  )
+                );
+                setMazgalEventApplied(false);
               }}
               className="inline-flex items-center gap-1 rounded border border-[#D4A853]/30 bg-[#192621] px-2.5 py-1 text-[11px] font-medium text-[#E8C472] hover:border-[#D4A853]/65 cursor-pointer"
             >
@@ -193,7 +214,7 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
           <p className="mt-1.5 text-sm leading-relaxed text-[#D9D3C4]">{cell.summary}</p>
 
           {mazgalEvent && (
-            <div className="mt-3 rounded-md border border-[#D4A853]/25 bg-[#101A16] p-3 text-xs space-y-1.5">
+            <div className="mt-3 rounded-md border border-[#D4A853]/25 bg-[#101A16] p-3 text-xs space-y-2">
               <div className="flex items-center justify-between gap-2 font-mono text-[10px]">
                 <span className="text-[#D4A853]">
                   1d20: {mazgalEvent.roll1d20} · {mazgalEvent.kind}
@@ -203,6 +224,28 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
               <p className="font-semibold text-[#F8F3E6]">{mazgalEvent.title}</p>
               <p className="leading-relaxed text-[#CFC8B9]">{mazgalEvent.detail}</p>
               <p className="text-[11px] text-[#D4A853]">{mazgalEvent.outcomeNote}</p>
+              {onApplyMazgalEvent && (
+                <div className="flex items-center justify-between gap-2 border-t border-[#D4A853]/15 pt-2">
+                  <button
+                    type="button"
+                    disabled={mazgalEventApplied}
+                    onClick={() => {
+                      onApplyMazgalEvent(cell, mazgalEvent);
+                      setMazgalEventApplied(true);
+                    }}
+                    className={`rounded border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      mazgalEventApplied
+                        ? 'border-[#67C7C0]/25 bg-[#132520]/60 text-[#7BAFA9] cursor-default'
+                        : 'border-[#67C7C0]/40 bg-[#132520] text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer'
+                    }`}
+                  >
+                    {mazgalEventApplied ? 'Karşılaşma İşlendi (+1 Saat)' : 'Olayı Yaşa (+1 Saat)'}
+                  </button>
+                  {mazgalEventApplied && (
+                    <span className="text-[10px] text-[#67C7C0]">Karaktere ve zamana işlendi</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -231,6 +274,76 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
             </div>
           </div>
         )}
+
+        {/* Roaming Units inside this cell */}
+        {(() => {
+          const cellUnits = (protagonist?.roamingUnits ?? []).filter(
+            (u) => u.mazgalId === cell.id
+          );
+          if (cellUnits.length === 0) return null;
+          const isPlayerInCell = protagonist?.mazgalId === cell.id;
+          return (
+            <div className="border-t border-[#D4A853]/15 pt-4 space-y-2">
+              <h3 className="text-xs font-semibold tracking-wide text-[#67C7C0]">
+                Bu Mazgaldaki Hareketli Gruplar ({cellUnits.length})
+              </h3>
+              {roamFeedback && (
+                <p className="rounded border border-[#D4A853]/30 bg-[#15201B] px-2.5 py-1.5 text-[11px] text-[#E8C472]">
+                  {roamFeedback}
+                </p>
+              )}
+              {cellUnits.map((unit) => (
+                <div
+                  key={unit.id}
+                  className="rounded border border-[#D4A853]/20 bg-[#101A16] p-2.5 text-xs space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-[#F3EBD8]">{unit.name}</span>
+                    <span className="font-mono text-[10px] text-[#9AA8A1]">
+                      Güç {unit.strength}/5
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#CFC8B9]">{unit.statusNote}</p>
+                  {isPlayerInCell && onInteractRoamingUnit ? (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRoamFeedback(onInteractRoamingUnit(unit.id, 'greet_trade'))
+                        }
+                        className="rounded border border-[#67C7C0]/30 bg-[#13241F] px-2 py-1 text-[10px] text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                      >
+                        Selamla / Bilgi (+1s)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRoamFeedback(onInteractRoamingUnit(unit.id, 'escort_aid'))
+                        }
+                        className="rounded border border-[#D4A853]/30 bg-[#1A241E] px-2 py-1 text-[10px] text-[#E8C472] hover:bg-[#233129] cursor-pointer"
+                      >
+                        Eşlik / Destek (+1s)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRoamFeedback(onInteractRoamingUnit(unit.id, 'ambush_raid'))
+                        }
+                        className="rounded border border-[#DC6B6B]/30 bg-[#231718] px-2 py-1 text-[10px] text-[#F2B8B8] hover:bg-[#2E1E1F] cursor-pointer"
+                      >
+                        Baskın / Çatış (+1s)
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-[#8E9C95]">
+                      Karşılaşmak için bu mazgala yürüyün.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Neighbor Effects */}
         <div className="border-t border-[#D4A853]/15 pt-4">

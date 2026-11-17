@@ -17,7 +17,12 @@ import {
   X,
 } from 'lucide-react';
 import { CATEGORY_LABELS } from '../data/easternForestData';
-import type { MapLocation, MapRoute } from '../types/map';
+import type {
+  MapLocation,
+  MapRoute,
+  ProtagonistState,
+  SettlementResident,
+} from '../types/map';
 import { getCellForCoords } from '../utils/gridEngine';
 import { getDailyRoutineForLocation, getLivingSectionLabels } from '../utils/livingWorldEngine';
 import {
@@ -26,6 +31,11 @@ import {
   type ProceduralNpcCard,
   type ProceduralSceneCard,
 } from '../utils/proceduralWorldDeck';
+import {
+  FACTION_LABELS,
+  getFactionForLocation,
+  getReputationLabel,
+} from '../utils/protagonistEngine';
 import { soundFx } from '../utils/sound';
 
 interface LocationInspectorProps {
@@ -33,6 +43,7 @@ interface LocationInspectorProps {
   routes: MapRoute[];
   allLocations: MapLocation[];
   isPartyHere: boolean;
+  protagonist?: ProtagonistState;
   fogOfWar: boolean;
   gameTimeMs: number;
   onMoveParty: (id: string) => void;
@@ -41,8 +52,15 @@ interface LocationInspectorProps {
   onEditLocation: (loc: MapLocation) => void;
   onDeleteLocation: (id: string) => void;
   onInspectMazgal?: (mazgalId: string) => void;
-  onResolveVillageProblem?: (locationId: string, problemId: string) => void;
+  onResolveVillageProblem?: (locationId: string, problemId: string) => string | void;
+  onInteractRoamingUnit?: (
+    unitId: string,
+    mode: 'greet_trade' | 'escort_aid' | 'ambush_raid'
+  ) => string;
   onRecordProceduralScene?: (scene: ProceduralSceneCard, advanceHours: number) => void;
+  onMeetProceduralNpc?: (npc: ProceduralNpcCard, locationId?: string) => void;
+  onMeetResident?: (resident: SettlementResident, locationId: string) => void;
+  onOpenProtagonist?: (tab?: 'status' | 'party' | 'relations') => void;
   onClose?: () => void;
 }
 
@@ -51,6 +69,7 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
   routes,
   allLocations,
   isPartyHere,
+  protagonist,
   fogOfWar,
   gameTimeMs,
   onMoveParty,
@@ -60,17 +79,25 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
   onDeleteLocation,
   onInspectMazgal,
   onResolveVillageProblem,
+  onInteractRoamingUnit,
   onRecordProceduralScene,
+  onMeetProceduralNpc,
+  onMeetResident,
+  onOpenProtagonist,
   onClose,
 }) => {
   const [imgFailed, setImgFailed] = useState(false);
   const [rolledScene, setRolledScene] = useState<ProceduralSceneCard | null>(null);
   const [rolledNpc, setRolledNpc] = useState<ProceduralNpcCard | null>(null);
+  const [problemFeedback, setProblemFeedback] = useState<string | null>(null);
+  const [roamFeedback, setRoamFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     setImgFailed(false);
     setRolledScene(null);
     setRolledNpc(null);
+    setProblemFeedback(null);
+    setRoamFeedback(null);
   }, [location?.id]);
 
   if (!location) {
@@ -161,7 +188,7 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
             }`}
           >
             <Navigation className="h-3.5 w-3.5" />
-            {isPartyHere ? 'Grup Şu An Burada' : 'Grubu Buraya Taşı'}
+            {isPartyHere ? 'Şu An Buradasın' : 'Buraya Yürü'}
           </button>
 
           <button
@@ -215,6 +242,53 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
             </span>
           </button>
         )}
+
+        {protagonist && (() => {
+          const factionKey = getFactionForLocation(location);
+          const repScore = protagonist.reputation[factionKey] ?? 0;
+          const repInfo = getReputationLabel(repScore);
+          const localContacts = (protagonist.contacts ?? []).filter(
+            (c) => c.currentLocationId === location.id
+          );
+          return (
+            <div className="space-y-2 rounded-md border border-[#67C7C0]/20 bg-[#101C18] px-3 py-2.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-[#9AA8A1]">{FACTION_LABELS[factionKey]} İtibarı: </span>
+                  <strong className="font-mono text-[#67C7C0] tabular-nums">
+                    {repScore > 0 ? `+${repScore}` : repScore} ({repInfo.label})
+                  </strong>
+                </div>
+                {onOpenProtagonist && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenProtagonist('status')}
+                    className="text-[11px] font-medium text-[#D4A853] hover:text-[#E8C472] cursor-pointer"
+                  >
+                    Durumunu Gör
+                  </button>
+                )}
+              </div>
+              {localContacts.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#67C7C0]/15 pt-1.5 text-[11px]">
+                  <span className="text-[#CFC8B9]">
+                    <strong className="text-[#D4A853]">Buradaki Tanıdıklar:</strong>{' '}
+                    {localContacts.map((c) => c.name).join(', ')}
+                  </span>
+                  {onOpenProtagonist && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenProtagonist('relations')}
+                      className="font-medium text-[#67C7C0] hover:text-[#9CE3DD] cursor-pointer"
+                    >
+                      İlişkileri & Partiyi Aç
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Player Lore */}
         <div className="border-t border-[#D4A853]/15 pt-4">
@@ -320,7 +394,15 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                     type="button"
                     onClick={() => {
                       soundFx.playDiceRoll();
-                      setRolledScene(generateProceduralScene(location, gameTimeMs, 'auto'));
+                      setRolledScene(
+                        generateProceduralScene(
+                          location,
+                          gameTimeMs,
+                          'auto',
+                          Math.max(25, 100 - location.dangerLevel * 15),
+                          protagonist?.activeWorldWave?.dangerShift ?? 0
+                        )
+                      );
                     }}
                     className="inline-flex flex-1 items-center justify-center gap-1.5 rounded border border-[#D4A853]/30 bg-[#182520] px-2.5 py-1.5 text-[11px] font-medium text-[#E8C472] hover:border-[#D4A853]/65 whitespace-nowrap cursor-pointer"
                   >
@@ -373,7 +455,7 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                 )}
 
                 {rolledNpc && (
-                  <div className="mt-2.5 rounded-md border border-[#67C7C0]/25 bg-[#101C18] p-3 text-xs space-y-1">
+                  <div className="mt-2.5 rounded-md border border-[#67C7C0]/25 bg-[#101C18] p-3 text-xs space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold text-[#F8F3E6]">{rolledNpc.name}</span>
                       <span className="text-[10px] text-[#D4A853]">{rolledNpc.role}</span>
@@ -382,6 +464,18 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                     <p className="text-[11px] text-[#CFC8B9]">
                       <strong>Amacı:</strong> {rolledNpc.motive} · <strong>Eşya:</strong> {rolledNpc.carriedItem}
                     </p>
+                    {onMeetProceduralNpc && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onMeetProceduralNpc(rolledNpc, location.id);
+                          setRolledNpc(null);
+                        }}
+                        className="mt-1 w-full rounded border border-[#67C7C0]/40 bg-[#132520] px-2.5 py-1.5 text-[11px] font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                      >
+                        Tanış ve İlişki Kur (Parti / İlişkiler)
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -391,6 +485,11 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                 <h4 className="text-xs font-semibold text-[#E29D72]">
                   {labels.problemsHeading} ({ls.activeProblems.length})
                 </h4>
+                {problemFeedback && (
+                  <p className="mt-1.5 rounded border border-[#67C7C0]/30 bg-[#101D19] px-2.5 py-1.5 text-[11px] text-[#9CE3DD]">
+                    {problemFeedback}
+                  </p>
+                )}
                 {ls.activeProblems.length === 0 ? (
                   <p className="mt-1 text-xs text-[#8E9C95]">
                     {labels.noProblemsText}
@@ -406,17 +505,20 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                           <div>
                             <p className="font-semibold text-[#F8F3E6]">{prob.title}</p>
                             <p className="mt-0.5 font-mono text-[10px] text-[#9AA8A1] tabular-nums">
-                              Önem: {prob.severity} · Başlangıç: {prob.startedAt}
+                              Önem: {prob.severity} · Deneme: {prob.attempts} · Başlangıç: {prob.startedAt}
                             </p>
                           </div>
                           {onResolveVillageProblem && (
                             <button
                               type="button"
-                              onClick={() => onResolveVillageProblem(location.id, prob.id)}
-                              className="inline-flex shrink-0 items-center gap-1 rounded border border-[#67C7C0]/35 bg-[#132520] px-2 py-1 text-[11px] font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                              onClick={() => {
+                                const msg = onResolveVillageProblem(location.id, prob.id);
+                                if (typeof msg === 'string') setProblemFeedback(msg);
+                              }}
+                              className="inline-flex shrink-0 items-center gap-1 rounded border border-[#67C7C0]/35 bg-[#132520] px-2 py-1 text-[11px] font-medium text-[#9CE3DD] hover:bg-[#19322B] whitespace-nowrap cursor-pointer"
                             >
                               <CheckCircle2 className="h-3 w-3" />
-                              Grup Çözdü
+                              Müdahale Et (+3s)
                             </button>
                           )}
                         </div>
@@ -426,6 +528,75 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Roaming Units currently parked at this location */}
+              {(() => {
+                const localUnits = (protagonist?.roamingUnits ?? []).filter(
+                  (u) => Math.hypot(u.x - location.x, u.y - location.y) < 1.8
+                );
+                if (localUnits.length === 0) return null;
+                return (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold text-[#D4A853]">
+                      Bölgedeki Hareketli Gruplar ({localUnits.length})
+                    </h4>
+                    {roamFeedback && (
+                      <p className="rounded border border-[#D4A853]/30 bg-[#15201B] px-2.5 py-1.5 text-[11px] text-[#E8C472]">
+                        {roamFeedback}
+                      </p>
+                    )}
+                    {localUnits.map((unit) => (
+                      <div
+                        key={unit.id}
+                        className="rounded border border-[#D4A853]/20 bg-[#101A16] p-2.5 text-xs space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-[#F3EBD8]">{unit.name}</span>
+                          <span className="font-mono text-[10px] text-[#9AA8A1]">
+                            Güç {unit.strength}/5
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#CFC8B9]">{unit.cargoOrHook}</p>
+                        {isPartyHere && onInteractRoamingUnit ? (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRoamFeedback(onInteractRoamingUnit(unit.id, 'greet_trade'))
+                              }
+                              className="rounded border border-[#67C7C0]/30 bg-[#13241F] px-2 py-1 text-[10px] text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                            >
+                              Selamla / Bilgi (+1s)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRoamFeedback(onInteractRoamingUnit(unit.id, 'escort_aid'))
+                              }
+                              className="rounded border border-[#D4A853]/30 bg-[#1A241E] px-2 py-1 text-[10px] text-[#E8C472] hover:bg-[#233129] cursor-pointer"
+                            >
+                              Eşlik / Destek (+1s)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRoamFeedback(onInteractRoamingUnit(unit.id, 'ambush_raid'))
+                              }
+                              className="rounded border border-[#DC6B6B]/30 bg-[#231718] px-2 py-1 text-[10px] text-[#F2B8B8] hover:bg-[#2E1E1F] cursor-pointer"
+                            >
+                              Baskın / Çatış (+1s)
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-[#8E9C95]">
+                            Etkileşim için bu konuma seyahat etmelisin.
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {/* Rumors */}
               {ls.rumors.length > 0 && (
@@ -463,6 +634,15 @@ export const LocationInspector: React.FC<LocationInspectorProps> = ({
                         </div>
                         <p className="mt-0.5 text-[11px] text-[#9AA8A1]">{res.trait}</p>
                         <p className="mt-1 text-[11px] text-[#CFC8B9]">{res.renownNote}</p>
+                        {onMeetResident && (
+                          <button
+                            type="button"
+                            onClick={() => onMeetResident(res, location.id)}
+                            className="mt-1.5 rounded border border-[#67C7C0]/30 bg-[#13241F] px-2 py-1 text-[10px] font-medium text-[#9CE3DD] hover:bg-[#19322B] cursor-pointer"
+                          >
+                            Tanış / İlişkilere Ekle
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
