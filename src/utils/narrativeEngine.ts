@@ -296,7 +296,7 @@ export function createInitialNarrativeMessages(
         id: 'nar-init-1',
         role: 'narrator',
         speaker: 'Anlatıcı',
-        text: `Sisli Doğu Ormanı'nın derinliklerinde, dev çam ve meşelerin altındaki nemli yosunların üzerinde ${phase.toLowerCase()} vakti ${weatherDesc} içinde gözlerini açıyorsun. Geçmişin, buraya nasıl düştüğün ve kim olduğun zihninde karanlık bir boşluktan ibaret; hatırladığın tek gerçek, adının Eşref olduğu. 18 yaşındaki esmer, 185 cm boyunda ve atletik yapılı bedenin serin orman rüzgarıyla ürperirken ayağa kalkıp çevreni tartıyorsun.`,
+        text: `Sisli Doğu Ormanı'nda, dev çamların altındaki ıslak yosunların üzerinde ${phase.toLowerCase()} vakti ${weatherDesc} içinde gözlerini açıyorsun. Adın dışında her şeyi unuttun; 18 yaşındasın, 185 cm boyundasın ve serin rüzgâr sırtını ürpertiyor. Ayağa kalkıp etrafını tartıyorsun.`,
         timestamp: ts,
         locationLabel: placeLabel,
         choices: [
@@ -818,7 +818,9 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
     !forceObserve &&
     (hasExactWord(norm, ['av', 'avi']) ||
       hasWordPrefix(norm, ['avlan', 'avla']) ||
-      includesAny(norm, ['topla', 'calis', 'kazan', 'odun', 'balik']))
+      // "calis" kaldırıldı: çalışıyorum = trying / working ambiguity.
+      // "topla" ~ "topluyorum" ünlü değişimi: her iki kök de aranır.
+      includesAny(norm, ['topla', 'toplu', 'kazan', 'odun', 'balik']))
   ) {
     const nextMs = addGameHours(gameTimeMs, ACTION_HOURS.forage_or_work);
     const outcome = performProtagonistAction(
@@ -899,7 +901,8 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
       };
     }
 
-    if (includesAny(norm, ['cal', 'hirsiz', 'kacir', 'tutsak', 'gasp'])) {
+    // "cal" alt-string araması "çalışıyorum"u da hırsızlık sanıyordu.
+    if (/\bcal(?!is)\w*\b/.test(norm) || includesAny(norm, ['hirsiz', 'kacir', 'tutsak', 'gasp'])) {
       const shadowKind = includesAny(norm, ['kacir', 'tutsak'])
         ? 'capture_captive'
         : includesAny(norm, ['gasp', 'harac'])

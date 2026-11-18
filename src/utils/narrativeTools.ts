@@ -29,6 +29,13 @@ import {
   resolveSettlementProblemByParty,
 } from './livingWorldEngine';
 import { buildContextualChoices } from './narrativeEngine';
+import { forceFirstPersonAction, guardNarrativeText } from './narrativeGuard';
+import {
+  hasForageIntent,
+  hasStealIntent,
+  normalizeTr,
+  parseRequestedDurationMinutes,
+} from './narrativeIntent';
 import {
   advancePartyAndContactsWithTime,
   interactWithLivingNpc,
@@ -93,18 +100,6 @@ const WEATHER_LABELS: Record<WeatherConditionKey, string> = {
   rain: 'Orman yağmuru',
   storm: 'Sert fırtına',
 };
-
-function normalizeTr(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/ı/g, 'i')
-    .replace(/ğ/g, 'g')
-    .replace(/ü/g, 'u')
-    .replace(/ş/g, 's')
-    .replace(/ö/g, 'o')
-    .replace(/ç/g, 'c')
-    .trim();
-}
 
 function getLocationCategoryLabel(category: MapLocation['category']): string {
   switch (category) {
@@ -1796,6 +1791,49 @@ export interface AiTurnExecutionResult {
   rolledDiceThisTurn: boolean;
 }
 
+/**
+ * Oyuncu uzun bir süre ilan ettiyse motorun gerçekleştirdiği ilk adımın
+ * dışında kalan zamanı da ilerletir; aksi hâlde "1 gün yürü" 5 dakikada kalıyordu.
+ */
+function applyRequestedDurationIfNeeded(rawText: string, state: NarrativeWorkingState): boolean {
+  const requested = parseRequestedDurationMinutes(rawText);
+  if (requested < 60) return false;
+  const actualMinutes = Math.round(state.hoursSpentTotal * 60);
+  const remaining = Math.min(1440, requested) - actualMinutes;
+  if (remaining < 30) return false;
+
+  const { currentLocation, currentMazgal } = getCurrentContext(state);
+  const prevMs = state.gameTimeMs;
+  const nextMs = addGameMinutes(prevMs, remaining);
+  const notices = advanceWorldStateInTurn(
+    state,
+    prevMs,
+    nextMs,
+    currentLocation,
+    currentMazgal
+  );
+  state.gameTimeMs = nextMs;
+  state.hoursSpentTotal += remaining / 60;
+  const durationLabel = formatTravelHours(remaining / 60);
+  state.lastTimeAction = `İlan edilen süre (+${durationLabel})${
+    notices.length > 0 ? ` · ${notices[0]}` : ''
+  }`;
+  const fact = `Oyuncunun ilan ettiği toplam süre ${formatTravelHours(requested / 60)}; ilk adım sonrası kalan ${durationLabel} boyunca dünya ilerledi.${
+    notices.length > 0 ? ` ${notices[0]}` : ''
+  }`;
+  state.engineFacts.push(fact);
+  state.actionRecords.push({
+    category: 'free_roleplay',
+    subType: 'declared_duration',
+    summary: fact,
+    outcomeTone: 'neutral',
+    durationLabel,
+    focusDirective: 'Oyuncunun ilan ettiği uzun süreyi ve dünyanın bu sürede ilerlediğini net ve kısa söyle; text içinde saat/mesafe uydurma.',
+    forbiddenHints: ['Kısa bir yürüyüş veya "birkaç adım" denmez.'],
+  });
+  return true;
+}
+
 function runHeuristicEngineTurn(
   rawText: string,
   chosenOption: NarrativeChoice | undefined,
@@ -1872,7 +1910,10 @@ function runHeuristicEngineTurn(
     executeNarrativeToolCall('camp_forage_or_aid', { activity: 'rest_camp' }, state);
     return;
   }
-  if (/\b(avlan\w*|avla\w*|odun topla\w*|balik\w*|yiyecek ara\w*|calis\w*)\b/.test(norm)) {
+  // NOT: "calis" asla tek başına tetikleyici değil — "denemek/çalışıyorum" ile
+  // "iş yapmak" aynı kökten geliyor; "Ağaçtan inmeye çalışıyorsun" 3 saatlik
+  // toplama eylemine dönüşüyordu. Nesneli kalıplar yeterli.
+  if (hasForageIntent(norm)) {
     executeNarrativeToolCall('camp_forage_or_aid', { activity: 'forage_or_work' }, state);
     return;
   }
@@ -1889,7 +1930,9 @@ function runHeuristicEngineTurn(
     executeNarrativeToolCall('combat_or_shadow_action', { intent: 'ambush_group' }, state);
     return;
   }
-  if (/\b(cal\w*|hirsiz\w*|gasp\w*|harac\w*|tutsak\w*|kacir\w*)\b/.test(norm)) {
+  // "cal(?!is)": çal/çalmak (steal) değil, calis/çalış (try/work) ayrımı.
+  // "Ağaçtan inmeye çalışıyorsun" burada da hırsızlık sanılıyordu.
+  if (hasStealIntent(norm)) {
     const intent = /\b(tutsak\w*|kacir\w*)\b/.test(norm)
       ? 'capture_captive'
       : /\b(gasp\w*|harac\w*)\b/.test(norm)
@@ -2069,6 +2112,7 @@ export async function runAiNarrativeTurn(params: {
   } | null = null;
 
   let needsChainedPlan = false;
+  let durationApplied = false;
   for (let round = 0; round < 3; round += 1) {
     const mode =
       round === 0 || (round === 1 && needsChainedPlan) ? 'plan' : 'finalize';
@@ -2077,6 +2121,7 @@ export async function runAiNarrativeTurn(params: {
       if (workingState.engineFacts.length === 0) {
         runHeuristicEngineTurn(trimmed, chosenOption, workingState);
       }
+      if (!durationApplied) durationApplied = applyRequestedDurationIfNeeded(trimmed, workingState);
       const postCtx = getCurrentContext(workingState);
       const focusedSceneCard = buildFocusedSceneCard({
         protagonist: workingState.protagonist,
@@ -2248,6 +2293,7 @@ export async function runAiNarrativeTurn(params: {
         role: 'user',
         parts: fnResponses,
       });
+      if (!durationApplied) durationApplied = applyRequestedDurationIfNeeded(trimmed, workingState);
       continue;
     }
 
@@ -2255,9 +2301,11 @@ export async function runAiNarrativeTurn(params: {
       if (round === 0 && workingState.engineFacts.length === 0) {
         runHeuristicEngineTurn(trimmed, chosenOption, workingState);
         if (workingState.engineFacts.length > 0) {
+          if (!durationApplied) durationApplied = applyRequestedDurationIfNeeded(trimmed, workingState);
           continue;
         }
       }
+      if (!durationApplied) durationApplied = applyRequestedDurationIfNeeded(trimmed, workingState);
       finalPayload = data.narrative;
       break;
     }
@@ -2291,14 +2339,42 @@ export async function runAiNarrativeTurn(params: {
             workingState.locations,
             endCtx.currentLocation
           ),
-          actionPrompt: sanitizeNarrativeOutputForEpistemicSafety(
-            c.actionPrompt,
-            workingState.locations,
-            endCtx.currentLocation
+          actionPrompt: forceFirstPersonAction(
+            sanitizeNarrativeOutputForEpistemicSafety(
+              c.actionPrompt,
+              workingState.locations,
+              endCtx.currentLocation
+            )
           ),
           kind: c.kind,
         }))
       : fallbackChoices;
+
+  const safeText = sanitizeNarrativeOutputForEpistemicSafety(
+    finalPayload.text,
+    workingState.locations,
+    endCtx.currentLocation
+  );
+  // NPC diyaloğuna "sen" dili koruması uygulanmaz; yalnızca anlatıcı metni düzeltilir.
+  const guardedText =
+    finalPayload.role === 'dialogue'
+      ? safeText
+      : guardNarrativeText({
+          text: safeText,
+          recentNarratorTexts: recentMessages
+            .filter((m) => m.role !== 'player' && m.role !== 'dialogue')
+            .slice(-4)
+            .map((m) => m.text),
+          engineFacts: workingState.engineFacts,
+          fallback:
+            workingState.engineFacts.length > 0
+              ? sanitizeNarrativeOutputForEpistemicSafety(
+                  workingState.engineFacts[0],
+                  workingState.locations,
+                  endCtx.currentLocation
+                )
+              : 'Eylemin tamamlandı; çevrede belirgin bir değişiklik yok.',
+        });
 
   const aiMsg: NarrativeMessage = {
     id: `ai-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
@@ -2308,11 +2384,7 @@ export async function runAiNarrativeTurn(params: {
       workingState.locations,
       endCtx.currentLocation
     ),
-    text: sanitizeNarrativeOutputForEpistemicSafety(
-      finalPayload.text,
-      workingState.locations,
-      endCtx.currentLocation
-    ),
+    text: guardedText,
     timestamp: formatGameDateTime(workingState.gameTimeMs),
     locationLabel: endPlace,
     choices: sanitizedChoices,

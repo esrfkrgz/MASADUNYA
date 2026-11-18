@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:narrative": "tsx tests/narrative-regression.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.4.0",

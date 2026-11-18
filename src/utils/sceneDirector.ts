@@ -361,6 +361,30 @@ export function buildFocusedSceneCard(params: {
       .map((i) => `${i.name} x${i.qty}`)
       .join(', ') || 'Yok';
 
+  // Son turlarda anlatılan somut öğeleri modelin önüne koy: tekrarın ana kaynağı bunlar.
+  const recentConcrete = Array.from(
+    new Set(
+      recentMessages
+        .filter((m) => m.role !== 'player')
+        .slice(-3)
+        .flatMap((m) => m.text.split(/(?<=[.!?])\s+/))
+        .join(' ')
+        .toLocaleLowerCase('tr-TR')
+        .match(/\b[a-zçğıöşü]{4,}\b/gi) ?? []
+    )
+  )
+    .filter(
+      (word) =>
+        !new Set([
+          'içinde', 'üzerinde', 'olduğu', 'olduğunu', 'olduğu', 'çevrende', 'çevresinde',
+          'yönünde', 'yönüne', 'duruyor', 'duruyorsun', 'görüyorsun', 'hissediyorsun',
+          'etrafında', 'yakınında', 'karşısında', 'oldu', 'için', 'ile', 'birkaç',
+          'sadece', 'sonra', 'yine', 'daha', 'çok', 'kendi', 'ancak', 'fakat',
+        ]).has(word)
+    )
+    .slice(0, 14)
+    .join(', ');
+
   const postureLabel =
     posture === 'treetop'
       ? 'Yüksek ağaç tepesinde (~8-10m yukarıda, YERDE DEĞİL)'
@@ -490,6 +514,7 @@ export function buildFocusedSceneCard(params: {
     `\n[MOTOR KARARI / NE OLDU]\n${resultsBlock}`,
     `\n[ANLATIM ODAĞI]\n- ${focusLines.join('\n- ')}`,
     forbiddenLines.length > 0 ? `- Yasaklar: ${forbiddenLines.join(' ')}` : '',
+    `TEKRAR YASAĞI — Son Turlardaki Somut Öğeler (BUNLARI YENİDEN ANLATMA): ${recentConcrete || 'yok'}`,
     `Seçenek Sınırları: Yalnızca şu yönleri (${availableDirs}) veya bilinen yerleri (${
       knownSettlements || 'yok'
     }) kullan; gizli kamp/klan/uzak yer adı ve sahnede olmayan nesne (ateş, iskele, matara vb.) ekleme.`,
