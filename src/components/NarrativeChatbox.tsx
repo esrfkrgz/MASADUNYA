@@ -1,12 +1,34 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageSquare, RefreshCw, RotateCcw, Send, Settings } from 'lucide-react';
-import type { NarrativeChoice, NarrativeMessage } from '../types/map';
+import {
+  Backpack,
+  Coins,
+  Flame,
+  FlaskConical,
+  HeartPulse,
+  MessageSquare,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  Settings,
+  Shield,
+  Sword,
+  Utensils,
+} from 'lucide-react';
+import type {
+  InventoryItem,
+  InventoryItemId,
+  NarrativeChoice,
+  NarrativeMessage,
+} from '../types/map';
 
 interface NarrativeChatboxProps {
   messages: NarrativeMessage[];
   protagonistName: string;
   currentPlaceLabel: string;
   activeModelName?: string;
+  inventory?: InventoryItem[];
+  rations?: number;
+  silver?: number;
   isFullscreen?: boolean;
   isPending?: boolean;
   errorMessage?: string | null;
@@ -15,6 +37,7 @@ interface NarrativeChatboxProps {
     text: string,
     choice?: NarrativeChoice
   ) => Promise<boolean> | boolean | void;
+  onUseQuickItem?: (itemId: 'rations' | InventoryItemId) => void;
   onRetryFailedAction?: () => Promise<boolean> | boolean | void;
   onResetNarrative: () => void;
   onOpenSettings?: () => void;
@@ -25,11 +48,15 @@ export const NarrativeChatbox: React.FC<NarrativeChatboxProps> = ({
   protagonistName,
   currentPlaceLabel,
   activeModelName,
+  inventory = [],
+  rations = 0,
+  silver = 0,
   isFullscreen = false,
   isPending = false,
   errorMessage = null,
   failedAttempt = null,
   onSubmitAction,
+  onUseQuickItem,
   onRetryFailedAction,
   onResetNarrative,
   onOpenSettings,
@@ -73,13 +100,26 @@ export const NarrativeChatbox: React.FC<NarrativeChatboxProps> = ({
     }
   };
 
+  const activeInventory = inventory.filter((item) => item.qty > 0);
+  const usableWeapons = activeInventory.filter((item) => (item.physBonus ?? 0) > 0);
+  const usableConsumables = activeInventory.filter((item) => item.category === 'Tüketim');
+  const passiveCarriedItems = activeInventory.filter(
+    (item) => (item.physBonus ?? 0) <= 0 && item.category !== 'Tüketim'
+  );
+
+  const getConsumableIcon = (id: InventoryItemId) => {
+    if (id === 'healing_herb') return HeartPulse;
+    if (id === 'antidote_vial') return FlaskConical;
+    return Flame;
+  };
+
   return (
     <section
       aria-label="Anlatı ve eylem akışı"
       className={`flex flex-col overflow-hidden rounded-lg border border-[#D4A853]/18 bg-[#101A16] ${
         isFullscreen
-          ? 'h-[35vh] min-h-[220px] max-h-[340px] shrink-0'
-          : 'h-[430px] sm:h-[460px]'
+          ? 'h-[39vh] min-h-[250px] max-h-[390px] shrink-0'
+          : 'h-[470px] sm:h-[500px]'
       }`}
     >
       {/* Header */}
@@ -271,6 +311,123 @@ export const NarrativeChatbox: React.FC<NarrativeChatboxProps> = ({
           {isPending ? 'Bekleniyor' : 'Gönder'}
         </button>
       </form>
+
+      {/* Quick Inventory Strip directly under the input box */}
+      <div
+        aria-label="Envanter ve hızlı kullanım"
+        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-t border-[#D4A853]/15 bg-[#0E1714] px-3 py-2 text-[11px]"
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 font-medium text-[#9AA8A1] mr-0.5">
+            <Sword className="h-3 w-3 text-[#D4A853]" />
+            Kullanılabilir:
+          </span>
+
+          {usableWeapons.map((weapon) => (
+            <button
+              key={weapon.id}
+              type="button"
+              disabled={isPending}
+              title={`${weapon.name} ile önündeki hedefe doğrudan saldır (${weapon.description})`}
+              onClick={() =>
+                onSubmitAction(
+                  `Elimdeki ${weapon.name} ile önümdeki hedefe doğrudan saldırıyorum!`,
+                  {
+                    id: `quick-atk-${weapon.id}`,
+                    label: `${weapon.name} ile Saldır`,
+                    actionPrompt: `Elimdeki ${weapon.name} ile önümdeki hedefe doğrudan saldırıyorum!`,
+                    kind: 'risk',
+                  }
+                )
+              }
+              className="inline-flex items-center gap-1 rounded border border-[#DC6B6B]/40 bg-[#251617] px-2 py-0.5 font-medium text-[#F5C6C6] transition-colors hover:border-[#DC6B6B]/75 hover:bg-[#321D1F] disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
+            >
+              <Sword className="h-3 w-3 text-[#E89898]" />
+              <span>{weapon.name}</span>
+              <span className="font-mono text-[10px] text-[#E89898]">+{weapon.physBonus}</span>
+            </button>
+          ))}
+
+          {usableConsumables.map((item) => {
+            const ItemIcon = getConsumableIcon(item.id);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={isPending}
+                title={item.description}
+                onClick={() => {
+                  if (onUseQuickItem) {
+                    onUseQuickItem(item.id);
+                  } else {
+                    onSubmitAction(`${item.name} kullanıyorum.`);
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded border border-[#67C7C0]/35 bg-[#122521] px-2 py-0.5 font-medium text-[#AEEAE4] transition-colors hover:border-[#67C7C0]/70 hover:bg-[#18322C] disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
+              >
+                <ItemIcon className="h-3 w-3 text-[#67C7C0]" />
+                <span>{item.name}</span>
+                <span className="font-mono text-[10px] text-[#67C7C0]">x{item.qty}</span>
+              </button>
+            );
+          })}
+
+          {rations > 0 && (
+            <button
+              type="button"
+              disabled={isPending}
+              title="1 porsiyon kuru erzak ye (Açlığı azaltır, +8 Zindelik)"
+              onClick={() => {
+                if (onUseQuickItem) {
+                  onUseQuickItem('rations');
+                } else {
+                  onSubmitAction('Çantamdan 1 porsiyon kuru erzak yiyorum.');
+                }
+              }}
+              className="inline-flex items-center gap-1 rounded border border-[#D4A853]/35 bg-[#201D14] px-2 py-0.5 font-medium text-[#F0DFB6] transition-colors hover:border-[#D4A853]/70 hover:bg-[#2C271B] disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
+            >
+              <Utensils className="h-3 w-3 text-[#D4A853]" />
+              <span>Kuru Erzak</span>
+              <span className="font-mono text-[10px] text-[#D4A853]">x{rations}</span>
+            </button>
+          )}
+
+          {usableWeapons.length === 0 && usableConsumables.length === 0 && rations <= 0 && (
+            <span className="text-[#73837B]">Kullanılabilir silah veya eşya yok</span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 font-medium text-[#8E9C95] mr-0.5">
+            <Backpack className="h-3 w-3 text-[#9AA8A1]" />
+            Üstümdekiler:
+          </span>
+
+          <span
+            title="Kesendeki gümüş sikke miktarı"
+            className="inline-flex items-center gap-1 rounded border border-[#D4A853]/20 bg-[#141F1B] px-2 py-0.5 font-mono text-[10.5px] text-[#E8C472] whitespace-nowrap select-none"
+          >
+            <Coins className="h-3 w-3 text-[#D4A853]" />
+            {silver} Gümüş
+          </span>
+
+          {passiveCarriedItems.map((item) => (
+            <span
+              key={item.id}
+              title={item.description}
+              className="inline-flex items-center gap-1 rounded border border-[#56665F]/35 bg-[#131C18] px-2 py-0.5 text-[#C8D0CB] whitespace-nowrap select-none"
+            >
+              {(item.armorReduction ?? 0) > 0 && (
+                <Shield className="h-3 w-3 text-[#9AA8A1]" />
+              )}
+              <span>{item.name}</span>
+              {item.qty > 1 && (
+                <span className="font-mono text-[10px] text-[#8E9C95]">x{item.qty}</span>
+              )}
+            </span>
+          ))}
+        </div>
+      </div>
     </section>
   );
 };

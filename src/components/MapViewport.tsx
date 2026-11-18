@@ -28,10 +28,9 @@ import type {
   MapRoute,
   MazgalCell,
   ProtagonistState,
-  TravelPace,
-  TravelTransport,
   WeatherConditionKey,
 } from '../types/map';
+import { GRID_COLS, GRID_ROWS, getCellForCoords } from '../utils/gridEngine';
 
 interface MapViewportProps {
   locations: MapLocation[];
@@ -55,8 +54,6 @@ interface MapViewportProps {
   onToggleFogOfWar: () => void;
   onToggleRoutes: () => void;
   onToggleSound: () => void;
-  onChangeTravelMode?: (pace: TravelPace, transport: TravelTransport) => void;
-  onWeatherChanged?: (weatherKey: WeatherConditionKey, label?: string) => void;
   onOpenInspector?: () => void;
   onOpenProtagonist?: () => void;
 }
@@ -100,8 +97,6 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   onToggleFogOfWar,
   onToggleRoutes,
   onToggleSound,
-  onChangeTravelMode,
-  onWeatherChanged,
   onOpenInspector,
   onOpenProtagonist,
 }) => {
@@ -125,15 +120,24 @@ export const MapViewport: React.FC<MapViewportProps> = ({
     setShowGrid(false);
   }, [resetKey]);
 
-  const visibleLocations = fogOfWar
-    ? locations.filter((loc) => loc.discovered)
-    : locations;
+  const revealedMazgalSet = new Set<string>([
+    ...(protagonist?.visitedMazgalIds ?? []),
+    ...(protagonist?.mazgalId ? [protagonist.mazgalId] : []),
+  ]);
+
+  const isLocationRevealed = (loc: MapLocation): boolean => {
+    if (!fogOfWar) return true;
+    const locCellId = getCellForCoords(loc.x, loc.y).id;
+    return revealedMazgalSet.has(locCellId) || (Boolean(loc.isCustom) && loc.discovered);
+  };
+
+  const visibleLocations = locations.filter(isLocationRevealed);
 
   const visibleRoutes = routes.filter((rt) => {
     const from = locations.find((l) => l.id === rt.fromId);
     const to = locations.find((l) => l.id === rt.toId);
     if (!from || !to) return false;
-    if (fogOfWar) return from.discovered && to.discovered;
+    if (fogOfWar) return isLocationRevealed(from) && isLocationRevealed(to);
     return true;
   });
 
@@ -286,63 +290,37 @@ export const MapViewport: React.FC<MapViewportProps> = ({
             {showGrid ? 'Mazgal Sistemi: Açık' : 'Mazgal Sistemi'}
           </button>
 
-          {onChangeTravelMode && protagonist && (
-            <div className="flex flex-wrap items-center gap-1.5 border-l border-[#D4A853]/18 pl-2">
-              <select
-                aria-label="Yürüyüş temposu"
-                value={protagonist.travelPace ?? 'normal'}
-                onChange={(e) =>
-                  onChangeTravelMode(
-                    e.target.value as TravelPace,
-                    protagonist.travelTransport ?? 'foot'
-                  )
-                }
-                className="rounded-md border border-[#D4A853]/25 bg-[#101A16] px-2 py-1 text-xs text-[#EDE6D6] focus:border-[#D4A853] focus:outline-none cursor-pointer"
-              >
-                <option value="stealth">Tempo: Gizli</option>
-                <option value="normal">Tempo: Normal</option>
-                <option value="forced">Tempo: Zorlu</option>
-              </select>
-
-              <select
-                aria-label="Ulaşım aracı"
-                value={protagonist.travelTransport ?? 'foot'}
-                onChange={(e) =>
-                  onChangeTravelMode(
-                    protagonist.travelPace ?? 'normal',
-                    e.target.value as TravelTransport
-                  )
-                }
-                className="rounded-md border border-[#D4A853]/25 bg-[#101A16] px-2 py-1 text-xs text-[#EDE6D6] focus:border-[#D4A853] focus:outline-none cursor-pointer"
-              >
-                <option value="foot">Yaya</option>
-                <option value="mule">Katır / Araba</option>
-                <option value="boat">Kayık / Tekne</option>
-              </select>
-            </div>
-          )}
-
-          {onWeatherChanged && (
-            <select
-              aria-label="Bölge hava durumu"
-              value={activeWeatherKey}
-              onChange={(e) => {
-                const val = e.target.value as WeatherConditionKey;
-                const names: Record<WeatherConditionKey, string> = {
-                  clear: 'Açık / Soğuk Rüzgar',
-                  mist: 'Yoğun Doğu Sisi',
-                  rain: 'Soğuk Orman Yağmuru',
-                  storm: 'Sert Vadi Fırtınası',
-                };
-                onWeatherChanged(val, names[val]);
-              }}
-              className="rounded-md border border-[#67C7C0]/25 bg-[#101A16] px-2 py-1 text-xs text-[#9CE3DD] focus:border-[#67C7C0] focus:outline-none cursor-pointer"
+          {protagonist && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 border-l border-[#D4A853]/18 pl-2 select-none"
+              title="Tempo, ulaşım aracı ve hava durumu motor tarafından mevcut duruma göre otomatik belirlenir."
             >
-              <option value="clear">Hava: Açık</option>
-              <option value="mist">Hava: Yoğun Sis</option>
-              <option value="rain">Hava: Yağmur</option>
-              <option value="storm">Hava: Fırtına</option>
-            </select>
+              <span className="rounded-md border border-[#D4A853]/20 bg-[#101A16]/90 px-2.5 py-1 text-xs text-[#EDE6D6]">
+                Tempo:{' '}
+                {protagonist.travelPace === 'stealth'
+                  ? 'Gizli'
+                  : protagonist.travelPace === 'forced'
+                  ? 'Zorlu'
+                  : 'Normal'}
+              </span>
+              <span className="rounded-md border border-[#D4A853]/20 bg-[#101A16]/90 px-2.5 py-1 text-xs text-[#EDE6D6]">
+                {protagonist.travelTransport === 'mule'
+                  ? 'Katır / Araba'
+                  : protagonist.travelTransport === 'boat'
+                  ? 'Kayık / Tekne'
+                  : 'Yaya'}
+              </span>
+              <span className="rounded-md border border-[#67C7C0]/25 bg-[#101A16]/90 px-2.5 py-1 text-xs text-[#9CE3DD]">
+                Hava:{' '}
+                {activeWeatherKey === 'clear'
+                  ? 'Açık'
+                  : activeWeatherKey === 'rain'
+                  ? 'Yağmur'
+                  : activeWeatherKey === 'storm'
+                  ? 'Fırtına'
+                  : 'Yoğun Sis'}
+              </span>
+            </div>
           )}
         </div>
 
@@ -487,11 +465,13 @@ export const MapViewport: React.FC<MapViewportProps> = ({
                 gridTemplateColumns: 'repeat(16, minmax(0, 1fr))',
                 gridTemplateRows: 'repeat(9, minmax(0, 1fr))',
               }}
-              className="absolute inset-0 z-[5] h-full w-full"
+              className="absolute inset-0 z-[8] h-full w-full"
             >
               {mazgalCells.map((cell) => {
                 const isCellSelected = cell.id === selectedMazgalId;
                 const adjacentMeta = neighborById.get(cell.id);
+                const isCellVisited = revealedMazgalSet.has(cell.id);
+                const isFoggedCell = fogOfWar && !isCellVisited;
                 return (
                   <button
                     key={cell.id}
@@ -502,28 +482,34 @@ export const MapViewport: React.FC<MapViewportProps> = ({
                         onSelectMazgal(cell.id);
                       }
                     }}
-                    aria-label={`Mazgal ${cell.id} - ${cell.terrainLabel}`}
-                    className={`group relative flex items-center justify-center border border-[#D4A853]/22 transition-colors duration-100 cursor-pointer focus-visible:outline-1 focus-visible:outline-[#D4A853] ${
+                    aria-label={`Mazgal ${cell.id} - ${
+                      isFoggedCell ? 'Keşfedilmemiş Bölge' : cell.terrainLabel
+                    }`}
+                    className={`group relative flex items-center justify-center border transition-colors duration-100 cursor-pointer focus-visible:outline-1 focus-visible:outline-[#D4A853] ${
                       isCellSelected
-                        ? 'bg-[#D4A853]/25 ring-1 ring-inset ring-[#D4A853]'
+                        ? 'border-[#D4A853]/70 bg-[#D4A853]/25 ring-1 ring-inset ring-[#D4A853]'
                         : adjacentMeta
-                        ? 'bg-[#67C7C0]/10 hover:bg-[#67C7C0]/24'
-                        : 'hover:bg-[#D4A853]/15'
+                        ? 'border-[#D4A853]/25 bg-[#67C7C0]/10 hover:bg-[#67C7C0]/24'
+                        : isFoggedCell
+                        ? 'border-[#7E9087]/18 bg-[#050A08]/25 hover:bg-[#D4A853]/12'
+                        : 'border-[#67C7C0]/28 hover:bg-[#D4A853]/15'
                     }`}
                   >
                     <span
-                      className={`pointer-events-none flex flex-col items-center rounded bg-[#0D1512]/90 px-1.5 py-0.5 font-mono text-[9px] leading-tight text-[#F3EBD8] transition-opacity ${
+                      className={`pointer-events-none flex flex-col items-center rounded bg-[#0D1512]/92 px-1.5 py-0.5 font-mono text-[9px] leading-tight text-[#F3EBD8] transition-opacity ${
                         isCellSelected
                           ? 'opacity-100 border border-[#D4A853]/60'
                           : 'opacity-0 group-hover:opacity-100'
                       }`}
                     >
                       <span>{cell.id}</span>
-                      {adjacentMeta && (
+                      {adjacentMeta ? (
                         <span className="text-[8px] text-[#67C7C0] whitespace-nowrap">
                           {adjacentMeta.travelLabel}
                         </span>
-                      )}
+                      ) : isFoggedCell ? (
+                        <span className="text-[8px] text-[#8E9C95] whitespace-nowrap">Sisli</span>
+                      ) : null}
                     </span>
                   </button>
                 );
@@ -561,14 +547,17 @@ export const MapViewport: React.FC<MapViewportProps> = ({
             </svg>
           )}
 
-          {/* Fog of War Mask */}
+          {/* Fog of War Mask (Only reveals visited/opened mazgal cells) */}
           {fogOfWar && (
             <svg
               viewBox="0 0 100 100"
               preserveAspectRatio="none"
-              className="pointer-events-none absolute inset-0 h-full w-full"
+              className="pointer-events-none absolute inset-0 z-[6] h-full w-full"
             >
               <defs>
+                <filter id="fogCellFeather" x="-40%" y="-40%" width="180%" height="180%">
+                  <feGaussianBlur stdDeviation="1.35" />
+                </filter>
                 <radialGradient id="fogReveal">
                   <stop offset="0%" stopColor="black" stopOpacity="1" />
                   <stop offset="65%" stopColor="black" stopOpacity="0.85" />
@@ -576,9 +565,34 @@ export const MapViewport: React.FC<MapViewportProps> = ({
                 </radialGradient>
                 <mask id="fogOfWarMask">
                   <rect x="0" y="0" width="100" height="100" fill="white" />
-                  {visibleLocations.map((loc) => (
-                    <circle key={loc.id} cx={loc.x} cy={loc.y} r="16" fill="url(#fogReveal)" />
-                  ))}
+                  {mazgalCells
+                    .filter((cell) => revealedMazgalSet.has(cell.id))
+                    .map((cell) => {
+                      const cellW = 100 / GRID_COLS;
+                      const cellH = 100 / GRID_ROWS;
+                      const cellX = cell.col * cellW;
+                      const cellY = cell.row * cellH;
+                      return (
+                        <rect
+                          key={cell.id}
+                          x={cellX - 0.55}
+                          y={cellY - 0.75}
+                          width={cellW + 1.1}
+                          height={cellH + 1.5}
+                          rx={1.1}
+                          fill="black"
+                          filter="url(#fogCellFeather)"
+                        />
+                      );
+                    })}
+                  {protagonist && (
+                    <circle
+                      cx={protagonist.x}
+                      cy={protagonist.y}
+                      r="5.5"
+                      fill="url(#fogReveal)"
+                    />
+                  )}
                 </mask>
               </defs>
               <rect
@@ -586,8 +600,8 @@ export const MapViewport: React.FC<MapViewportProps> = ({
                 y="0"
                 width="100"
                 height="100"
-                fill="#09110E"
-                fillOpacity="0.82"
+                fill="#070E0B"
+                fillOpacity="0.93"
                 mask="url(#fogOfWarMask)"
               />
             </svg>
@@ -657,11 +671,8 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
           {/* Autonomous Roaming Caravans, Patrols & Raiders */}
           {(protagonist?.roamingUnits ?? []).map((unit) => {
-            if (fogOfWar) {
-              const targetLoc = locations.find((l) => l.id === unit.currentLocationId);
-              if (targetLoc && !targetLoc.discovered && unit.mazgalId !== protagonist?.mazgalId) {
-                return null;
-              }
+            if (fogOfWar && !revealedMazgalSet.has(unit.mazgalId)) {
+              return null;
             }
             const UnitIcon =
               unit.kind === 'raider' ? Skull : unit.kind === 'caravan' ? Truck : Shield;
@@ -764,7 +775,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({
       {!isFullscreen && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[#9AA8A1]">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>{locations.filter((l) => l.discovered).length} / {locations.length} Konum Keşfedildi</span>
+            <span>{revealedMazgalSet.size} / {mazgalCells.length} Mazgal Açıldı</span>
+            <span aria-hidden="true">·</span>
+            <span>{visibleLocations.length} / {locations.length} Konum Keşfedildi</span>
             <span aria-hidden="true">·</span>
             <span>
               Konumun:{' '}

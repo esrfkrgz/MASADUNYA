@@ -180,10 +180,17 @@ const TERRAIN_PROFILES: Record<MazgalTerrain, TerrainProfile> = {
 };
 
 export function formatTravelHours(hours: number): string {
-  const rounded = Math.max(1, Math.round(hours));
-  if (rounded < 24) return `${rounded} Saat`;
-  const days = Math.floor(rounded / 24);
-  const rem = rounded % 24;
+  const totalMinutes = Math.max(0, Math.round(hours * 60));
+  if (totalMinutes === 0) return '0 Dk';
+  if (totalMinutes < 60) return `${totalMinutes} Dk`;
+  if (totalMinutes < 24 * 60) {
+    const wholeHours = Math.floor(totalMinutes / 60);
+    const remMinutes = totalMinutes % 60;
+    return remMinutes === 0 ? `${wholeHours} Saat` : `${wholeHours} Saat ${remMinutes} Dk`;
+  }
+  const roundedHours = Math.round(hours);
+  const days = Math.floor(roundedHours / 24);
+  const rem = roundedHours % 24;
   if (rem === 0) return `${days} Gün`;
   return `${days} Gün ${rem} Saat`;
 }
@@ -371,20 +378,34 @@ export function buildMazgalGrid(
       for (const loc of inside) {
         if (loc.id === 'loc-kuldere') {
           safety += 32;
-          effects.push('Külköy Sınır Kalesi burada bulunuyor; garnizon devriyeleri tam koruma sağlar (+32 Güvenlik).');
+          if (loc.discovered) {
+            effects.push('Külköy Sınır Kalesi burada bulunuyor; garnizon devriyeleri tam koruma sağlar (+32 Güvenlik).');
+          } else {
+            effects.push('Bölgede düzenli taş yollar ve güçlü sınır devriyesi izleri güvenliği artırıyor (+32 Güvenlik).');
+          }
         } else if (loc.category === 'village') {
           safety += 22;
-          effects.push(`${loc.name} yerleşimi bu mazgalda; yerel gözcüler ve ocak ışıkları güvenliği artırır (+22 Güvenlik).`);
+          if (loc.discovered) {
+            effects.push(`${loc.name} yerleşimi bu mazgalda; yerel gözcüler ve ocak ışıkları güvenliği artırır (+22 Güvenlik).`);
+          }
         } else if (loc.category === 'burrow') {
           safety -= 26;
-          effects.push(`${loc.name} bu mazgalın içinde; goblin ve kobold tuzakları ciddi tehdit oluşturur (-26 Güvenlik).`);
+          if (loc.discovered) {
+            effects.push(`${loc.name} bu mazgalın içinde; goblin ve kobold tuzakları ciddi tehdit oluşturur (-26 Güvenlik).`);
+          } else {
+            effects.push('Sık çalılıklar ve engebeli kuytular pusu veya vahşi tuzak tehlikesi taşıyor (-26 Güvenlik).');
+          }
         } else if (loc.category === 'danger') {
           safety -= 20;
-          effects.push(`${loc.name} bu mazgalda yer alıyor; eşkıya ve yağmacı riski yüksek (-20 Güvenlik).`);
+          if (loc.discovered) {
+            effects.push(`${loc.name} bu mazgalda yer alıyor; eşkıya ve yağmacı riski yüksek (-20 Güvenlik).`);
+          } else {
+            effects.push('Arazide tekinsiz bir sessizlik ve pusu tehlikesi seziliyor (-20 Güvenlik).');
+          }
         }
 
         const ls = loc.livingState;
-        if (ls) {
+        if (ls && loc.discovered) {
           if (ls.activeProblems.length > 0) {
             const probPenalty = ls.activeProblems.length * 5;
             safety -= probPenalty;
@@ -403,9 +424,10 @@ export function buildMazgalGrid(
       }
 
       // Check direct 8 neighbors for settlement protection, monster pressure, living crises, and terrain synergy
-      let nearFriendlySettlement: string | null = null;
-      let nearHostileSite: string | null = null;
-      let nearCrisisNote: string | null = null;
+      let nearFriendlyKnown: string | null = null;
+      let nearFriendlyUnknown = false;
+      let nearHostileKnown: string | null = null;
+      let nearCrisisKnownNote: string | null = null;
       let adjacentRiverCount = 0;
       let adjacentForestCount = 0;
       let adjacentMountainCount = 0;
@@ -425,13 +447,15 @@ export function buildMazgalGrid(
         for (const nl of nLocs) {
           if (nl.id === 'loc-kuldere') {
             safety += 28;
-            nearFriendlySettlement = nl.name;
-          } else if (nl.category === 'village' && !nearFriendlySettlement) {
+            if (nl.discovered) nearFriendlyKnown = nl.name;
+            else nearFriendlyUnknown = true;
+          } else if (nl.category === 'village') {
             safety += 16;
-            nearFriendlySettlement = nl.name;
+            if (nl.discovered && !nearFriendlyKnown) nearFriendlyKnown = nl.name;
+            else if (!nl.discovered) nearFriendlyUnknown = true;
           } else if (nl.category === 'burrow' || nl.category === 'danger') {
             safety -= 18;
-            nearHostileSite = nl.name;
+            if (nl.discovered) nearHostileKnown = nl.name;
           }
 
           const nls = nl.livingState;
@@ -439,8 +463,8 @@ export function buildMazgalGrid(
             if (nls.activeProblems.length > 0) {
               const neighborPenalty = Math.min(6, nls.activeProblems.length * 3);
               safety -= neighborPenalty;
-              if (!nearCrisisNote) {
-                nearCrisisNote = `Komşudaki ${nl.name} bölgesinin aktif sorunu (${nls.activeProblems[0].title}) çevreyi tedirgin ediyor (-${neighborPenalty} Güvenlik).`;
+              if (nl.discovered && !nearCrisisKnownNote) {
+                nearCrisisKnownNote = `Komşudaki ${nl.name} bölgesinin aktif sorunu (${nls.activeProblems[0].title}) çevreyi tedirgin ediyor (-${neighborPenalty} Güvenlik).`;
               }
             }
             if (nl.category === 'village' && nls.morale >= 80) {
@@ -454,22 +478,22 @@ export function buildMazgalGrid(
 
       // Distance decay from Kulkoy Sınır Kalesi (B5 -> col 1, row 4)
       const distFromKulkoy = Math.hypot(col - 1, row - 4);
-      if (distFromKulkoy > 0 && distFromKulkoy <= 2.2 && !nearFriendlySettlement) {
+      if (distFromKulkoy > 0 && distFromKulkoy <= 2.2 && !nearFriendlyKnown && !nearFriendlyUnknown) {
         safety += 12;
-        effects.push('Sınır kalesinin dış devriye menzili içinde (+12 Güvenlik).');
+        effects.push('Yollar görece düzenli ve sınır güvenliği hissediliyor (+12 Güvenlik).');
       } else if (distFromKulkoy >= 5.5 && (terrain === 'forest' || terrain === 'deep_forest')) {
         safety -= 10;
         effects.push('İnsan sınır karakollarından çok uzak derin orman bölgesi (-10 Güvenlik).');
       }
 
-      if (nearFriendlySettlement) {
-        effects.push(`${nearFriendlySettlement} komşuluğu nedeniyle devriye ve haberleşme desteği var.`);
+      if (nearFriendlyKnown) {
+        effects.push(`${nearFriendlyKnown} komşuluğu nedeniyle devriye ve haberleşme desteği var.`);
       }
-      if (nearHostileSite) {
-        effects.push(`Komşu mazgaldaki ${nearHostileSite} nedeniyle gözcü ve pusu tehlikesi mevcut.`);
+      if (nearHostileKnown) {
+        effects.push(`Komşu mazgaldaki ${nearHostileKnown} nedeniyle gözcü ve pusu tehlikesi mevcut.`);
       }
-      if (nearCrisisNote) {
-        effects.push(nearCrisisNote);
+      if (nearCrisisKnownNote) {
+        effects.push(nearCrisisKnownNote);
       }
 
       if (activeWeather === 'storm') {
@@ -506,7 +530,7 @@ export function buildMazgalGrid(
           : activeWorldWave.dangerShift * 4;
         safety -= wavePenalty;
         effects.push(
-          `Bölgesel dalga (${activeWorldWave.title}) arazi güvenliğini düşürüyor (-${wavePenalty} Güvenlik).`
+          `Bölge genelindeki olağanüstü hareketlilik ve gerginlik arazi güvenliğini düşürüyor (-${wavePenalty} Güvenlik).`
         );
       }
 

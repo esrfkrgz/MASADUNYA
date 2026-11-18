@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Cpu, SlidersHorizontal, X } from 'lucide-react';
+import { Cpu, SlidersHorizontal, X } from 'lucide-react';
 import type {
   NarrativeAiModelId,
   NarrativeAiSettings,
@@ -168,6 +168,7 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
       setAnyThinkStatus('');
       return;
     }
+
     let cancelled = false;
     const load = async () => {
       setAnyThinkStatus('Modeller yükleniyor...');
@@ -180,7 +181,10 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
             apiKey: settings.anythinkllmApiKey ?? '',
           }),
         });
-        const data = (await res.json()) as { models?: Array<{ id: string; name?: string }>; error?: string };
+        const data = (await res.json()) as {
+          models?: Array<{ id: string; name?: string }>;
+          error?: string;
+        };
         if (cancelled) return;
         if (!res.ok) {
           setAnyThinkModels([]);
@@ -192,7 +196,7 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
         setAnyThinkStatus(
           list.length > 0
             ? list.length + ' model bulundu.'
-            : 'Model bulunamadı; model adını elle yazabilirsiniz.',
+            : 'Model bulunamadı; model adını elle yazabilirsiniz.'
         );
         if (list.length > 0 && !list.some((model) => model.id === settings.anythinkllmModel)) {
           onChange({ ...settings, anythinkllmModel: list[0].id });
@@ -203,6 +207,7 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
         setAnyThinkStatus(err instanceof Error ? 'Bağlantı hatası: ' + err.message : 'Bağlantı hatası.');
       }
     };
+
     void load();
     return () => {
       cancelled = true;
@@ -251,7 +256,9 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
             <h3 className="mb-2 text-sm font-medium text-[#EDE6D6]">Yapay Zeka Sağlayıcı</h3>
             <select
               value={settings.provider ?? 'gemini'}
-              onChange={(e) => onChange({ ...settings, provider: e.target.value as 'gemini' | 'anythinkllm' })}
+              onChange={(e) =>
+                onChange({ ...settings, provider: e.target.value as 'gemini' | 'anythinkllm' })
+              }
               className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors focus:border-[#D4A853]/60"
             >
               <option value="gemini">Google Gemini</option>
@@ -260,23 +267,37 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
             {settings.provider === 'anythinkllm' && (
               <div className="mt-3 space-y-2.5">
                 <div>
-                  <label htmlFor="anythinkllm-base-url" className="mb-1 block text-[11px] font-medium text-[#A3B1AA]">AnyThinkLLM API URL</label>
+                  <label
+                    htmlFor="anythinkllm-base-url"
+                    className="mb-1 block text-[11px] font-medium text-[#A3B1AA]"
+                  >
+                    AnyThinkLLM API URL
+                  </label>
                   <input
                     id="anythinkllm-base-url"
                     type="text"
                     value={settings.anythinkllmBaseUrl ?? ''}
-                    onChange={(e) => onChange({ ...settings, anythinkllmBaseUrl: e.target.value })}
+                    onChange={(e) =>
+                      onChange({ ...settings, anythinkllmBaseUrl: e.target.value })
+                    }
                     placeholder="http://localhost:3001/api/v1/openai"
                     className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
                   />
                 </div>
                 <div>
-                  <label htmlFor="anythinkllm-api-key" className="mb-1 block text-[11px] font-medium text-[#A3B1AA]">AnyThinkLLM API Anahtarı</label>
+                  <label
+                    htmlFor="anythinkllm-api-key"
+                    className="mb-1 block text-[11px] font-medium text-[#A3B1AA]"
+                  >
+                    AnyThinkLLM API Anahtarı
+                  </label>
                   <input
                     id="anythinkllm-api-key"
                     type="password"
                     value={settings.anythinkllmApiKey ?? ''}
-                    onChange={(e) => onChange({ ...settings, anythinkllmApiKey: e.target.value })}
+                    onChange={(e) =>
+                      onChange({ ...settings, anythinkllmApiKey: e.target.value })
+                    }
                     placeholder="AnyThinkLLM API anahtarı"
                     autoComplete="off"
                     className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
@@ -284,7 +305,12 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
                 </div>
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label htmlFor="anythinkllm-model" className="text-[11px] font-medium text-[#A3B1AA]">Model</label>
+                    <label
+                      htmlFor="anythinkllm-model"
+                      className="text-[11px] font-medium text-[#A3B1AA]"
+                    >
+                      Model
+                    </label>
                     <button
                       type="button"
                       onClick={() => setAnyThinkReloadKey((key) => key + 1)}
@@ -297,7 +323,9 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
                     <select
                       id="anythinkllm-model"
                       value={settings.anythinkllmModel ?? ''}
-                      onChange={(e) => onChange({ ...settings, anythinkllmModel: e.target.value })}
+                      onChange={(e) =>
+                        onChange({ ...settings, anythinkllmModel: e.target.value })
+                      }
                       className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors focus:border-[#D4A853]/60"
                     >
                       {anyThinkModels.map((model) => (
@@ -311,7 +339,9 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
                       id="anythinkllm-model"
                       type="text"
                       value={settings.anythinkllmModel ?? ''}
-                      onChange={(e) => onChange({ ...settings, anythinkllmModel: e.target.value })}
+                      onChange={(e) =>
+                        onChange({ ...settings, anythinkllmModel: e.target.value })
+                      }
                       placeholder="Model adı (örn. gpt-4o)"
                       className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
                     />
@@ -346,7 +376,9 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
             </div>
             <select
               value={settings.model}
-              onChange={(e) => onChange({ ...settings, model: e.target.value as NarrativeAiModelId })}
+              onChange={(e) =>
+                onChange({ ...settings, model: e.target.value as NarrativeAiModelId })
+              }
               className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors focus:border-[#D4A853]/60"
             >
               {NARRATIVE_MODEL_OPTIONS.map((opt) => (
@@ -381,7 +413,6 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
               })}
             </div>
           </div>
-
         </div>
 
         {/* Footer */}

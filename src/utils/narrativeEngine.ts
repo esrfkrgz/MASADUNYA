@@ -13,6 +13,7 @@ import { addGameHours, formatGameDateTime, getDayPhaseLabel } from './gameTime';
 import { interactWithLivingNpc, type NpcInteractionType } from './partyAndRelationsEngine';
 import {
   ACTION_HOURS,
+  getHoursWithoutSleep,
   getProtagonistModifiers,
   performProtagonistAction,
 } from './protagonistEngine';
@@ -142,18 +143,32 @@ export function buildContextualChoices(ctx: NarrativeContextInput): NarrativeCho
   // 2. Aynı mazgalda hareketli grup varsa
   if (unitsHere.length > 0) {
     const unit = unitsHere[0];
+    const originKnown =
+      Boolean(currentLocation?.discovered) ||
+      allLocations.some(
+        (l) => l.discovered && l.id === unit.currentLocationId
+      );
     if (unit.kind === 'raider') {
+      const labelTarget = originKnown ? unit.name : 'silahlı karartılara';
       choices.push({
         id: `ch-unit-${unit.id}`,
-        label: `Pusu kur: ${unit.name}`,
-        actionPrompt: `${unit.name} birliğine karşı pusu kurup saldırıya geçiyorum.`,
+        label: originKnown ? `Pusu kur: ${unit.name}` : 'Yakındaki tehlikeye pusu kur',
+        actionPrompt: `${labelTarget} karşı pusu kurup saldırıya geçiyorum.`,
         kind: 'risk',
       });
     } else {
+      const genericRole =
+        unit.kind === 'caravan'
+          ? 'kervana'
+          : unit.kind === 'patrol'
+          ? 'devriyeye'
+          : 'gözcülere';
       choices.push({
         id: `ch-unit-${unit.id}`,
-        label: `Yaklaş ve konuş: ${unit.name}`,
-        actionPrompt: `${unit.name} grubuna yaklaşıp yol ve takas hakkında konuşuyorum.`,
+        label: originKnown ? `Yaklaş ve konuş: ${unit.name}` : `Yoldaki ${genericRole} yaklaş`,
+        actionPrompt: originKnown
+          ? `${unit.name} grubuna yaklaşıp yol ve takas hakkında konuşuyorum.`
+          : `Yoldaki ${genericRole} temkinli biçimde yaklaşıp sesleniyorum.`,
         kind: 'talk',
       });
     }
@@ -178,7 +193,8 @@ export function buildContextualChoices(ctx: NarrativeContextInput): NarrativeCho
     });
   }
 
-  // 4. Sağlık / Yorgunluk / Açlık durumu
+  // 4. Sağlık / Yorgunluk / Uykusuzluk durumu
+  const hoursAwake = getHoursWithoutSleep(protagonist, ctx.gameTimeMs);
   if (protagonist.health <= 60 && (protagonist.inventory ?? []).some((i) => i.id === 'healing_herb' && i.qty > 0)) {
     choices.push({
       id: 'ch-heal',
@@ -186,11 +202,14 @@ export function buildContextualChoices(ctx: NarrativeContextInput): NarrativeCho
       actionPrompt: 'Çantamdaki şifalı dağ kekiğini çıkarıp yaralarımı sarıyorum.',
       kind: 'rest',
     });
-  } else if (protagonist.stamina <= 42) {
+  } else if (hoursAwake >= 22 || protagonist.stamina <= 42) {
     choices.push({
       id: 'ch-rest',
-      label: 'Kamp kur ve dinlen',
-      actionPrompt: 'Güvenli bir köşe bulup ateş yakarak dinlenmeye çekiliyorum.',
+      label: hoursAwake >= 40 ? 'Hemen dur, kamp kur ve uyu' : 'Kamp kur ve uyu',
+      actionPrompt:
+        hoursAwake >= 40
+          ? 'Gözlerim kapanıyor; daha fazla dayanacak halim kalmadı, kuytu bir yer bulup uyumaya çekiliyorum.'
+          : 'Güvenli bir köşe bulup kamp kurarak uyuyup dinlenmeye çekiliyorum.',
       kind: 'rest',
     });
   } else {
@@ -205,27 +224,49 @@ export function buildContextualChoices(ctx: NarrativeContextInput): NarrativeCho
   // 5. Seyahat veya av/iş seçeneği (en fazla 4 seçenek)
   if (choices.length < 4) {
     if (currentLocation) {
-      const linked = routes.find(
-        (r) => r.fromId === currentLocation.id || r.toId === currentLocation.id
-      );
-      if (linked) {
-        const destId =
-          linked.fromId === currentLocation.id ? linked.toId : linked.fromId;
-        const dest = allLocations.find((l) => l.id === destId);
-        if (dest) {
-          choices.push({
-            id: `ch-move-${dest.id}`,
-            label: `${dest.name} yönüne yola çık`,
-            actionPrompt: `${dest.name} istikametine doğru yola çıkıyorum.`,
-            kind: 'travel',
-          });
-        }
+      const linkedDiscovered = routes
+        .filter((r) => r.fromId === currentLocation.id || r.toId === currentLocation.id)
+        .map((r) => {
+          const destId = r.fromId === currentLocation.id ? r.toId : r.fromId;
+          return allLocations.find((l) => l.id === destId && l.discovered);
+        })
+        .find((l): l is MapLocation => Boolean(l));
+
+      if (linkedDiscovered) {
+        choices.push({
+          id: `ch-move-${linkedDiscovered.id}`,
+          label: `${linkedDiscovered.name} yönüne yola çık`,
+          actionPrompt: `${linkedDiscovered.name} istikametine doğru yola çıkıyorum.`,
+          kind: 'travel',
+        });
+      } else if (currentMazgal.neighbors.length > 0) {
+        const nb = currentMazgal.neighbors[0];
+        const visitedSet = new Set(protagonist.visitedMazgalIds ?? [currentMazgal.id]);
+        const phase = getDayPhaseLabel(ctx.gameTimeMs);
+        const canSeeTerrain =
+          visitedSet.has(nb.id) ||
+          (phase !== 'Gece' && phase !== 'Gece Yarısı' && currentMazgal.visibilityMeters >= 45);
+        choices.push({
+          id: `ch-step-${nb.id}`,
+          label: canSeeTerrain
+            ? `${nb.direction} yönüne doğru ilerle (${nb.terrainLabel})`
+            : `${nb.direction} yönüne doğru ilerle`,
+          actionPrompt: `${nb.direction} yönüne doğru ilerliyorum.`,
+          kind: 'travel',
+        });
       }
     } else if (currentMazgal.neighbors.length > 0) {
       const nb = currentMazgal.neighbors[0];
+      const visitedSet = new Set(protagonist.visitedMazgalIds ?? [currentMazgal.id]);
+      const phase = getDayPhaseLabel(ctx.gameTimeMs);
+      const canSeeTerrain =
+        visitedSet.has(nb.id) ||
+        (phase !== 'Gece' && phase !== 'Gece Yarısı' && currentMazgal.visibilityMeters >= 45);
       choices.push({
         id: `ch-step-${nb.id}`,
-        label: `${nb.direction} yönüne doğru ilerle (${nb.terrainLabel})`,
+        label: canSeeTerrain
+          ? `${nb.direction} yönüne doğru ilerle (${nb.terrainLabel})`
+          : `${nb.direction} yönüne doğru ilerle`,
         actionPrompt: `${nb.direction} yönüne doğru ilerliyorum.`,
         kind: 'travel',
       });
@@ -390,7 +431,10 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
   // 1. Önce yer veya hareketli birim hedefleyen doğrudan seyahat niyeti var mı?
   if (!forceObserve && includesAny(norm, ['yola cik', 'git', 'gid', 'yuru', 'ilerle', 'istikametine'])) {
     const namedLoc = allLocations.find(
-      (l) => l.id !== currentLocation?.id && norm.includes(normalizeTr(l.name.split(' ')[0]))
+      (l) =>
+        l.discovered &&
+        l.id !== currentLocation?.id &&
+        norm.includes(normalizeTr(l.name.split(' ')[0]))
     );
     if (namedLoc) {
       return {
@@ -980,9 +1024,24 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
 
     const parts: string[] = [];
 
+    const phaseNow = getDayPhaseLabel(gameTimeMs);
+    const isNightNow = phaseNow === 'Gece' || phaseNow === 'Gece Yarısı';
+    const hasTorchNow = (protagonist.activeConditions ?? []).includes('Meşale Işığı');
+    const effVisNow = isNightNow
+      ? hasTorchNow
+        ? Math.min(18, currentMazgal.visibilityMeters)
+        : Math.min(5, currentMazgal.visibilityMeters)
+      : currentMazgal.visibilityMeters;
+
     if (isClimbing) {
       parts.push(
-        `185 cm boyun ve atletik çevikliğinle kalın dallara tutunup yüksek bir çamın tepesine yükseldiğinde (Algı ${roll}${modLabel}=${total}), sisin inceldiği noktalarda güneybatıdaki su parıltısını ve doğu yönündeki yüksek çam sırtlarını seçebiliyorsun.`
+        !isNightNow && effVisNow >= 45
+          ? `185 cm boyun ve atletik çevikliğinle kalın dallara tutunup yüksek bir çamın tepesine yükseldiğinde (Algı ${roll}${modLabel}=${total}), sisin inceldiği noktalarda yalnızca yakın çevredeki ağaç örtüsünün kıvrımlarını seçebiliyorsun.`
+          : `185 cm boyun ve atletik çevikliğinle yüksek bir ağaca tırmansan da (Algı ${roll}${modLabel}=${total}), ${
+              isNightNow && !hasTorchNow
+                ? 'gece karanlığı'
+                : `yaklaşık ${effVisNow} metrelik yoğun doğu sisi`
+            } ötesini örtüyor; uzak yapılar veya yerleşimler görünmüyor.`
       );
     } else if (isSelfInspect) {
       parts.push(
@@ -1000,11 +1059,11 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
       if (!currentLocation) {
         if (total >= 13) {
           const nearHint =
-            currentMazgal.neighbors[0]
+            !isNightNow && effVisNow >= 45 && currentMazgal.neighbors[0]
               ? `${currentMazgal.neighbors[0].direction} yönünde ${currentMazgal.neighbors[0].terrainLabel.toLowerCase()} başlıyor.`
               : '';
           parts.push(
-            `Keskin gözlemin (Algı ${roll}${modLabel}=${total}) sisin içindeki detayları yakalıyor: çevrede ${currentMazgal.resourceYield.toLowerCase()} izleri var. ${nearHint}`.trim()
+            `Keskin gözlemin (Algı ${roll}${modLabel}=${total}) yakın çevredeki detayları yakalıyor: etrafta ${currentMazgal.resourceYield.toLowerCase()} izleri var. ${nearHint}`.trim()
           );
         } else {
           parts.push(
@@ -1015,18 +1074,36 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
     }
 
     if (unitsHere.length > 0) {
-      parts.push(
-        `Yakında ${unitsHere.map((u) => `${u.name} (${u.statusNote})`).join(' ve ')} hareket halinde.`
-      );
+      const unitDesc = unitsHere
+        .map((u) => {
+          const known =
+            Boolean(currentLocation?.discovered) ||
+            allLocations.some((l) => l.discovered && l.id === u.currentLocationId);
+          if (known) return `${u.name} (${u.statusNote})`;
+          return u.kind === 'raider'
+            ? 'sis içinde beliren silahlı karartılar'
+            : u.kind === 'caravan'
+            ? 'yüklü yabancı bir kervan'
+            : 'yakında hareket eden silahlı bir devriye';
+        })
+        .join(' ve ');
+      parts.push(`Yakında ${unitDesc} hareket halinde.`);
     }
     if (total >= 13 && living && living.rumors.length > 0) {
-      parts.push(`Dikkatli kulak kabartman sana şu söylentiyi yakalattı: "${living.rumors[0]}"`);
+      let rumorText = living.rumors[0];
+      for (const loc of allLocations) {
+        if (loc.discovered || loc.id === currentLocation?.id) continue;
+        rumorText = rumorText.replace(new RegExp(escapeRegExp(loc.name), 'gi'), 'bilinmeyen bir yer');
+      }
+      parts.push(`Dikkatli kulak kabartman sana şu söylentiyi yakalattı: "${rumorText}"`);
     } else if (total >= 12 && currentMazgal.neighborEffects.length > 0) {
       parts.push(currentMazgal.neighborEffects[0]);
     }
     if (protagonist.activeWorldWave) {
       parts.push(
-        `Bölge genelinde "${protagonist.activeWorldWave.title}" etkisi hissediliyor.`
+        currentLocation?.discovered
+          ? `Bölge genelinde "${protagonist.activeWorldWave.title}" etkisi hissediliyor.`
+          : 'Bölge genelinde olağan dışı bir tedirginlik ve hareketlilik hissediliyor.'
       );
     }
 

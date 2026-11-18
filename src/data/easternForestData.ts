@@ -35,7 +35,7 @@ const BASE_LOCATIONS: MapLocation[] = [
     y: 55.2,
     dangerLevel: 1,
     travelTime: 'Başlangıç Noktası',
-    discovered: true,
+    discovered: false,
     imageUrl: villageImg,
     playerLore:
       'Büyük orman kuşağına girmeden önceki en büyük surlu insan yerleşimi. Ahşap palizadların içinde oduncular, tuz kervanları ve orman rehberleri konaklar. İnsan sınır yasaları gereği Külköy taş meydanında borçlu sözleşmeleri, yakalanan haydutlar ve savaş tutsaklarının alınıp satıldığı yasal bir köle ve esir pazarı da olağan düzenin parçasıdır.',
@@ -58,7 +58,7 @@ const BASE_LOCATIONS: MapLocation[] = [
     y: 39.2,
     dangerLevel: 1,
     travelTime: 'Külköy\'den 1 Gün',
-    discovered: true,
+    discovered: false,
     imageUrl: villageImg,
     playerLore:
       'Külköy\'ün kuzeyindeki rüzgarlı yamaç eteklerinde kurulmuş on beş haneli küçük çoban ve yün dokumacısı köyü. Taş ağılları, kurutulmuş peynir mahzenleri ve orman sınırını gözleyen tek katlı bir ahşap kulesi vardır.',
@@ -80,7 +80,7 @@ const BASE_LOCATIONS: MapLocation[] = [
     y: 65.2,
     dangerLevel: 2,
     travelTime: 'Külköy\'den Yarım Gün',
-    discovered: true,
+    discovered: false,
     imageUrl: villageImg,
     playerLore:
       'Sirkad Nehri\'nin batı kolu üzerinde kurulmuş küçük kereste ve odun kömürü köyü. Nehir boyunca dizili su değirmenleri, tomruk kızakları ve kömür ocaklarından çıkan is kokusu her yere sinmiştir.',
@@ -165,7 +165,7 @@ const BASE_LOCATIONS: MapLocation[] = [
     y: 60.2,
     dangerLevel: 2,
     travelTime: 'Külköy\'den 2 Gün',
-    discovered: true,
+    discovered: false,
     playerLore:
       'Kuzey dağlarından inen hızlı Sirkad Nehri üzerindeki en sağlam eski taş köprü. Kıyıda terk edilmiş bir gümrük kulübesi ve yolcuların gece konakladığı kuru taş ocaklar bulunur.',
     gmSecret:
@@ -316,7 +316,7 @@ const BASE_LOCATIONS: MapLocation[] = [
     y: 54.5,
     dangerLevel: 2,
     travelTime: 'Köprüden 3 Gün',
-    discovered: true,
+    discovered: false,
     playerLore:
       'Ormanın tam ortasını kaplayan geniş, durgun tatlı su gölü. Sazlık kıyılarda Bozpençe klanının ve gezgin tuzakçıların kurduğu ahşap iskeleler ile kurutma direkleri yer alır. Göl üzerinde yoğun sabah sisi çöktüğünde kıyıyı kaybetmek kolaydır.',
     gmSecret:

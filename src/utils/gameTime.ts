@@ -1,6 +1,7 @@
 export const INITIAL_GAME_TIME_MS = Date.UTC(2026, 5, 6, 8, 0, 0); // 06.06.2026 08:00
 
-const MS_PER_HOUR = 60 * 60 * 1000;
+const MS_PER_MINUTE = 60 * 1000;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 
 function pad2(n: number): string {
@@ -38,6 +39,10 @@ export function getDayPhaseLabel(ms: number): string {
   if (hour >= 14 && hour < 18) return 'İkindi';
   if (hour >= 18 && hour < 21) return 'Akşam';
   return 'Gece';
+}
+
+export function addGameMinutes(ms: number, minutes: number): number {
+  return ms + Math.round(minutes * MS_PER_MINUTE);
 }
 
 export function addGameHours(ms: number, hours: number): number {

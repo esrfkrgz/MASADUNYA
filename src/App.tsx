@@ -84,10 +84,13 @@ import {
   applyMazgalEventToProtagonist,
   applyProtagonistTravel,
   createInitialProtagonist,
+  evaluateSleepDeprivationAndCollapse,
   getFactionForLocation,
   getProtagonistModifiers,
   hydrateProtagonist,
   performProtagonistAction,
+  resolveAutomaticTravelPace,
+  resolveAutomaticTravelTransport,
 } from './utils/protagonistEngine';
 import {
   createInitialNarrativeMessages,
@@ -130,6 +133,7 @@ interface PersistedState {
   gameTimeMs?: number;
   protagonist?: ProtagonistState;
   activeWeatherKey?: WeatherConditionKey;
+  fogOfWar?: boolean;
   narrativeMessages?: NarrativeMessage[];
   aiSettings?: NarrativeAiSettings;
 }
@@ -226,7 +230,7 @@ export default function App() {
     initial.partyLocationId || 'loc-gumus-kopru'
   );
 
-  const [fogOfWar, setFogOfWar] = useState<boolean>(false);
+  const [fogOfWar, setFogOfWar] = useState<boolean>(() => initial.fogOfWar ?? true);
   const [activeWeatherKey, setActiveWeatherKey] = useState<WeatherConditionKey>(
     initial.activeWeatherKey ?? 'mist'
   );
@@ -252,9 +256,10 @@ export default function App() {
     choice?: NarrativeChoice;
   } | null>(null);
   const [narrativeSettingsOpen, setNarrativeSettingsOpen] = useState<boolean>(false);
-  const [aiSettings, setAiSettings] = useState<NarrativeAiSettings>(
-    initial.aiSettings ?? DEFAULT_AI_SETTINGS
-  );
+  const [aiSettings, setAiSettings] = useState<NarrativeAiSettings>(() => ({
+    ...DEFAULT_AI_SETTINGS,
+    ...(initial.aiSettings ?? {}),
+  }));
   const playArenaRef = useRef<HTMLDivElement>(null);
 
   const mazgalCells = useMemo(
@@ -300,6 +305,7 @@ export default function App() {
         gameTimeMs,
         protagonist,
         activeWeatherKey,
+        fogOfWar,
         narrativeMessages: narrativeMessages.slice(-80),
         aiSettings,
       };
@@ -315,6 +321,7 @@ export default function App() {
     gameTimeMs,
     protagonist,
     activeWeatherKey,
+    fogOfWar,
     narrativeMessages,
     aiSettings,
   ]);
@@ -393,11 +400,17 @@ export default function App() {
     current = waveRes.nextProtagonist;
     if (waveRes.waveAnnouncement) notices.push(waveRes.waveAnnouncement);
 
+    const weatherCell = arrivalCell ?? protagonistCurrentCell;
     const weatherRes = advanceRegionalWeatherWithTime(
       activeWeatherKey,
       current.activeWorldWave,
       prevMs,
-      nextMs
+      nextMs,
+      {
+        terrain: weatherCell.terrain,
+        safetyScore: weatherCell.safetyScore,
+        inSettlement: Boolean(arrivalLoc),
+      }
     );
     if (weatherRes.nextWeather !== activeWeatherKey) {
       setActiveWeatherKey(weatherRes.nextWeather);
@@ -636,38 +649,103 @@ export default function App() {
       protagonistCurrentLoc,
       protagonistCurrentCell
     );
+    let effectiveProtag = finalProtag;
+    let effectiveMs = nextMs;
+    let effectiveLoc = protagonistCurrentLoc;
+    let effectiveCell = protagonistCurrentCell;
+    let effectiveArrivals = roamingArrivals;
+    let sleepCollapsedNote: string | undefined;
+
+    if (actionType !== 'rest_camp') {
+      const sleepCheck = evaluateSleepDeprivationAndCollapse({
+        protagonist: finalProtag,
+        currentCell: protagonistCurrentCell,
+        mazgalCells,
+        locations,
+        gameTimeMs: nextMs,
+        duringTravel: false,
+      });
+      if (sleepCheck.collapsed && sleepCheck.collapseFact) {
+        effectiveMs = sleepCheck.nextTimeMs;
+        effectiveLoc = sleepCheck.landedLocation;
+        effectiveCell = sleepCheck.landedCell;
+        const sleepTick = processWorldTick(
+          sleepCheck.nextProtagonist,
+          nextMs,
+          effectiveMs,
+          effectiveLoc,
+          effectiveCell,
+          false
+        );
+        effectiveProtag = {
+          ...sleepTick.finalProtag,
+          lastSleptMs: effectiveMs,
+          lastUpdatedMs: effectiveMs,
+        };
+        effectiveArrivals = [...roamingArrivals, ...sleepTick.roamingArrivals];
+        sleepCollapsedNote = sleepCheck.collapseFact;
+        setGameTimeMs(effectiveMs);
+        if (effectiveLoc) setPartyLocationId(effectiveLoc.id);
+      }
+    }
+
     setLastTimeAction(
-      notices.length > 0
+      sleepCollapsedNote
+        ? `Uykusuzluktan Bayılma (${formatGameHour(effectiveMs)})`
+        : notices.length > 0
         ? `${actionNames[actionType]} (+${formatTravelHours(hours)}) · ${notices[0]}`
         : `${actionNames[actionType]} (+${formatTravelHours(hours)})`
     );
-    setProtagonist(finalProtag);
+    setProtagonist(effectiveProtag);
 
     setLocations((prev) => {
-      const shifted = protagonistCurrentLoc
-        ? prev.map((loc) =>
-            loc.id === protagonistCurrentLoc.id
-              ? applyExternalMoraleShift(
-                  loc,
-                  outcome.locationMoraleDelta,
-                  nextMs,
-                  `${protagonist.name} Etkisi`,
-                  outcome.locationEventNote
-                )
-              : loc
-          )
-        : prev;
-      return applyLocationsTick(shifted, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+      const shifted = prev.map((loc) => {
+        if (protagonistCurrentLoc && loc.id === protagonistCurrentLoc.id) {
+          return applyExternalMoraleShift(
+            loc,
+            outcome.locationMoraleDelta,
+            nextMs,
+            `${protagonist.name} Etkisi`,
+            outcome.locationEventNote
+          );
+        }
+        if (sleepCollapsedNote && effectiveLoc && loc.id === effectiveLoc.id) {
+          return { ...loc, discovered: true };
+        }
+        return loc;
+      });
+      return applyLocationsTick(shifted, gameTimeMs, effectiveMs, effectiveProtag, effectiveArrivals);
     });
 
-    if (hours >= 3) {
+    if (sleepCollapsedNote) {
+      setNarrativeMessages((prev) => [
+        ...prev.slice(-79),
+        createTravelNarrativeNotice(
+          {
+            protagonist: effectiveProtag,
+            currentLocation: effectiveLoc,
+            currentMazgal: effectiveCell,
+            allLocations: locations,
+            routes,
+            activeWeatherKey,
+            gameTimeMs: effectiveMs,
+          },
+          sleepCollapsedNote
+        ),
+      ]);
+    }
+
+    if (hours >= 3 || sleepCollapsedNote) {
       setJourneyLog((prev) => [
         {
           id: `log-${Date.now()}`,
-          locationId: protagonistCurrentLoc?.id ?? 'loc-kuldere',
-          locationName: protagonistCurrentLoc?.name ?? `Mazgal ${protagonistCurrentCell.id}`,
-          timestamp: formatGameDateTime(nextMs),
-          note: outcome.nextProtagonist.journal[0]?.detail ?? `${actionNames[actionType]} tamamlandı.`,
+          locationId: effectiveLoc?.id ?? 'loc-kuldere',
+          locationName: effectiveLoc?.name ?? `Mazgal ${effectiveCell.id}`,
+          timestamp: formatGameDateTime(effectiveMs),
+          note:
+            sleepCollapsedNote ??
+            outcome.nextProtagonist.journal[0]?.detail ??
+            `${actionNames[actionType]} tamamlandı.`,
         },
         ...prev,
       ]);
@@ -939,6 +1017,73 @@ export default function App() {
     return res.message;
   };
 
+  const handleQuickUseChatboxItem = (itemId: 'rations' | InventoryItemId) => {
+    const placeLabel = protagonistCurrentLoc
+      ? protagonistCurrentLoc.name
+      : protagonistCurrentCell.terrainLabel;
+    const ts = formatGameDateTime(gameTimeMs);
+
+    if (itemId === 'rations') {
+      if (protagonist.rations <= 0) return;
+      soundFx.playSelectChime();
+      const nextHunger = Math.max(0, protagonist.hunger - 45);
+      const nextStamina = Math.min(100, protagonist.stamina + 8);
+      const nextRations = protagonist.rations - 1;
+      const summary = `1 porsiyon kuru erzak tüketildi (Kalan: ${nextRations}). Açlık ${nextHunger}/100, Zindelik ${nextStamina}/100.`;
+      setProtagonist((prev) => ({
+        ...prev,
+        rations: nextRations,
+        hunger: nextHunger,
+        stamina: nextStamina,
+        lastObservation: summary,
+      }));
+      setLastTimeAction('Kuru Erzak Tüketildi');
+      setNarrativeMessages((prev) => [
+        ...prev.slice(-78),
+        {
+          id: `plr-item-${Date.now()}`,
+          role: 'player',
+          speaker: protagonist.name,
+          text: 'Çantamdan 1 porsiyon kuru erzak çıkarıp yiyorum.',
+          timestamp: ts,
+          locationLabel: placeLabel,
+        },
+        {
+          id: `nar-item-${Date.now() + 1}`,
+          role: 'narrator',
+          speaker: 'Anlatıcı',
+          text: `${protagonist.name} çantasından çıkardığı kuru erzağı yiyip gücünü topladı (${summary})`,
+          timestamp: ts,
+          locationLabel: placeLabel,
+        },
+      ]);
+      return;
+    }
+
+    const usedItem = (protagonist.inventory ?? []).find((i) => i.id === itemId && i.qty > 0);
+    if (!usedItem) return;
+    const resultMsg = handleUseItem(itemId);
+    setNarrativeMessages((prev) => [
+      ...prev.slice(-78),
+      {
+        id: `plr-item-${Date.now()}`,
+        role: 'player',
+        speaker: protagonist.name,
+        text: `${usedItem.name} kullanıyorum.`,
+        timestamp: ts,
+        locationLabel: placeLabel,
+      },
+      {
+        id: `nar-item-${Date.now() + 1}`,
+        role: 'narrator',
+        speaker: 'Anlatıcı',
+        text: resultMsg,
+        timestamp: ts,
+        locationLabel: placeLabel,
+      },
+    ]);
+  };
+
   const handleBuyItem = (itemId: 'rations' | InventoryItemId): string => {
     soundFx.playSelectChime();
     const res = buyMarketItem(protagonist, protagonistCurrentLoc, itemId, gameTimeMs);
@@ -1185,15 +1330,6 @@ export default function App() {
     setInspectorOpen(true);
   };
 
-  const handleChangeTravelMode = (pace: TravelPace, transport: TravelTransport) => {
-    soundFx.playSelectChime();
-    setProtagonist((prev) => ({
-      ...prev,
-      travelPace: pace,
-      travelTransport: transport,
-    }));
-  };
-
   const handleInteractRoamingUnit = (
     unitId: string,
     mode: 'greet_trade' | 'escort_aid' | 'ambush_raid'
@@ -1226,12 +1362,12 @@ export default function App() {
 
   const computeEffectiveTravelHours = (
     baseHours: number,
+    pace: TravelPace,
+    transport: TravelTransport,
     hasDirectRoute: boolean,
     requiresBoat: boolean
   ): number => {
-    const pace = protagonist.travelPace ?? 'normal';
-    const transport = protagonist.travelTransport ?? 'foot';
-    const paceMult = pace === 'stealth' ? 1.35 : pace === 'forced' ? 0.78 : 1.0;
+    const paceMult = pace === 'stealth' ? 1.18 : pace === 'forced' ? 0.8 : 1.0;
     const transportMult =
       transport === 'mule'
         ? hasDirectRoute
@@ -1242,27 +1378,38 @@ export default function App() {
         : 1.0;
     const weatherMult =
       activeWeatherKey === 'storm'
-        ? 1.4
+        ? 1.28
         : activeWeatherKey === 'rain'
-        ? 1.22
+        ? 1.14
         : activeWeatherKey === 'mist'
-        ? 1.12
+        ? 1.06
         : 1.0;
     return Math.max(1, Math.round(baseHours * paceMult * transportMult * weatherMult));
   };
 
   const handleStepMazgal = (fromId: string, nb: MazgalNeighborSummary) => {
-    const pace = protagonist.travelPace ?? 'normal';
-    const transport = protagonist.travelTransport ?? 'foot';
+    const targetCell = mazgalCells.find((c) => c.id === nb.id) ?? protagonistCurrentCell;
+    const pace = resolveAutomaticTravelPace(protagonist, targetCell, activeWeatherKey);
+    const transport = resolveAutomaticTravelTransport(
+      protagonist,
+      targetCell,
+      Boolean(nb.requiresBoat),
+      false
+    );
+    if ((targetCell.terrain === 'lake' || targetCell.terrain === 'sea') && transport !== 'boat') {
+      setLastTimeAction(`${nb.direction}: Kayık veya sal olmadan açık suya geçilemiyor`);
+      return;
+    }
     const adjustedHours = computeEffectiveTravelHours(
       nb.travelHours,
+      pace,
+      transport,
       false,
       Boolean(nb.requiresBoat)
     );
     const nextMs = addGameHours(gameTimeMs, adjustedHours);
     setGameTimeMs(nextMs);
 
-    const targetCell = mazgalCells.find((c) => c.id === nb.id) ?? protagonistCurrentCell;
     const locInside = targetCell.locationsInside[0];
     const { nextProtagonist, localMoraleDelta } = applyProtagonistTravel(
       protagonist,
@@ -1285,34 +1432,80 @@ export default function App() {
       targetCell,
       Boolean(locInside)
     );
+    let effectiveProtag = finalProtag;
+    let effectiveMs = nextMs;
+    let effectiveCell = targetCell;
+    let effectiveLoc: MapLocation | undefined = locInside;
+    let effectiveArrivals = roamingArrivals;
+    let sleepCollapsedNote: string | undefined;
+
+    const sleepCheck = evaluateSleepDeprivationAndCollapse({
+      protagonist: finalProtag,
+      currentCell: targetCell,
+      mazgalCells,
+      locations,
+      gameTimeMs: nextMs,
+      duringTravel: true,
+    });
+    if (sleepCheck.collapsed && sleepCheck.collapseFact) {
+      effectiveMs = sleepCheck.nextTimeMs;
+      effectiveCell = sleepCheck.landedCell;
+      effectiveLoc = sleepCheck.landedLocation;
+      const sleepTick = processWorldTick(
+        sleepCheck.nextProtagonist,
+        nextMs,
+        effectiveMs,
+        effectiveLoc,
+        effectiveCell,
+        false
+      );
+      effectiveProtag = {
+        ...sleepTick.finalProtag,
+        lastSleptMs: effectiveMs,
+        lastUpdatedMs: effectiveMs,
+      };
+      effectiveArrivals = [...roamingArrivals, ...sleepTick.roamingArrivals];
+      sleepCollapsedNote = sleepCheck.collapseFact;
+      setGameTimeMs(effectiveMs);
+    }
+
     setLastTimeAction(
-      notices.length > 0
+      sleepCollapsedNote
+        ? `Mazgal ${fromId} → ${effectiveCell.id} · Uykusuzluktan Bayılma`
+        : notices.length > 0
         ? `Mazgal ${fromId} → ${nb.id} (+${formatTravelHours(adjustedHours)}) · ${notices[0]}`
         : `Mazgal ${fromId} → ${nb.id} (+${formatTravelHours(adjustedHours)})`
     );
-    setProtagonist(finalProtag);
-    if (locInside) {
-      setPartyLocationId(locInside.id);
+    setProtagonist(effectiveProtag);
+    if (effectiveLoc) {
+      setPartyLocationId(effectiveLoc.id);
     }
 
     setLocations((prev) => {
+      const insideIds = new Set(targetCell.locationsInside.map((l) => l.id));
+      const landedInsideIds = new Set(effectiveCell.locationsInside.map((l) => l.id));
       const updated = prev.map((loc) => {
         if (locInside && loc.id === locInside.id) {
           const discoveredLoc = { ...loc, discovered: true };
           return applyExternalMoraleShift(discoveredLoc, localMoraleDelta, nextMs);
         }
+        if (insideIds.has(loc.id) || (sleepCollapsedNote && landedInsideIds.has(loc.id))) {
+          return { ...loc, discovered: true };
+        }
         return loc;
       });
-      return applyLocationsTick(updated, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+      return applyLocationsTick(updated, gameTimeMs, effectiveMs, effectiveProtag, effectiveArrivals);
     });
 
     setJourneyLog((prev) => [
       {
         id: `log-${Date.now()}`,
-        locationId: locInside?.id ?? partyLocationId,
-        locationName: locInside ? locInside.name : `Mazgal ${nb.id} (${nb.direction})`,
-        timestamp: formatGameDateTime(nextMs),
-        note: `Mazgal ${fromId} karesinden ${nb.id} karesine ${formatTravelHours(adjustedHours)} (${nb.distanceFersah} Fersah) yürüdün.`,
+        locationId: effectiveLoc?.id ?? partyLocationId,
+        locationName: effectiveLoc ? effectiveLoc.name : `Mazgal ${effectiveCell.id} (${nb.direction})`,
+        timestamp: formatGameDateTime(effectiveMs),
+        note:
+          sleepCollapsedNote ??
+          `Mazgal ${fromId} karesinden ${nb.id} karesine ${formatTravelHours(adjustedHours)} (${nb.distanceFersah} Fersah) yürüdün.`,
       },
       ...prev,
     ]);
@@ -1321,15 +1514,15 @@ export default function App() {
       ...prev.slice(-79),
       createTravelNarrativeNotice(
         {
-          protagonist: finalProtag,
-          currentLocation: locInside,
-          currentMazgal: targetCell,
+          protagonist: effectiveProtag,
+          currentLocation: effectiveLoc,
+          currentMazgal: effectiveCell,
           allLocations: locations,
           routes,
           activeWeatherKey,
-          gameTimeMs: nextMs,
+          gameTimeMs: effectiveMs,
         },
-        finalProtag.lastObservation
+        sleepCollapsedNote ?? effectiveProtag.lastObservation
       ),
     ]);
   };
@@ -1340,13 +1533,12 @@ export default function App() {
     const current = locations.find((l) => l.id === (protagonist.locationId ?? partyLocationId));
     soundFx.playMoveToken();
 
-    const pace = protagonist.travelPace ?? 'normal';
-    const transport = protagonist.travelTransport ?? 'foot';
     let baseHours = 12;
     let hasDirectRoute = false;
     let requiresBoat = false;
     const fromCellId = protagonist.mazgalId || (current ? getCellForCoords(current.x, current.y).id : 'B5');
     const toCellSummary = getCellForCoords(target.x, target.y);
+    const plan = findShortestMazgalPath(fromCellId, toCellSummary.id, mazgalCells);
 
     if (fromCellId === toCellSummary.id) {
       baseHours = Math.max(
@@ -1365,17 +1557,28 @@ export default function App() {
         baseHours = directRoute.travelHours;
         hasDirectRoute = true;
       } else {
-        const plan = findShortestMazgalPath(fromCellId, toCellSummary.id, mazgalCells);
         baseHours = plan.hours;
         requiresBoat = plan.requiresBoat;
       }
     }
 
-    const travelHours = computeEffectiveTravelHours(baseHours, hasDirectRoute, requiresBoat);
+    const targetCell = mazgalCells.find((c) => c.id === toCellSummary.id) ?? protagonistCurrentCell;
+    const pace = resolveAutomaticTravelPace(protagonist, targetCell, activeWeatherKey);
+    const transport = resolveAutomaticTravelTransport(
+      protagonist,
+      targetCell,
+      requiresBoat,
+      hasDirectRoute
+    );
+    const travelHours = computeEffectiveTravelHours(
+      baseHours,
+      pace,
+      transport,
+      hasDirectRoute,
+      requiresBoat
+    );
     const nextMs = addGameHours(gameTimeMs, travelHours);
     setGameTimeMs(nextMs);
-
-    const targetCell = mazgalCells.find((c) => c.id === toCellSummary.id) ?? protagonistCurrentCell;
     const { nextProtagonist, localMoraleDelta } = applyProtagonistTravel(
       protagonist,
       target,
@@ -1387,6 +1590,7 @@ export default function App() {
         transport,
         weather: activeWeatherKey,
         requiresBoat,
+        extraVisitedMazgalIds: plan.pathIds,
       }
     );
     const { finalProtag, notices, roamingArrivals } = processWorldTick(
@@ -1397,11 +1601,58 @@ export default function App() {
       targetCell,
       true
     );
-    const routeText = `${current && protagonist.locationId ? current.name : `Mazgal ${fromCellId}`} → ${target.name} (+${formatTravelHours(travelHours)})`;
-    setLastTimeAction(notices.length > 0 ? `${routeText} · ${notices[0]}` : routeText);
-    setProtagonist(finalProtag);
-    setPartyLocationId(id);
+    let effectiveProtag = finalProtag;
+    let effectiveMs = nextMs;
+    let effectiveCell = targetCell;
+    let effectiveLoc: MapLocation | undefined = target;
+    let effectiveArrivals = roamingArrivals;
+    let sleepCollapsedNote: string | undefined;
 
+    const sleepCheck = evaluateSleepDeprivationAndCollapse({
+      protagonist: finalProtag,
+      currentCell: targetCell,
+      mazgalCells,
+      locations,
+      gameTimeMs: nextMs,
+      duringTravel: true,
+    });
+    if (sleepCheck.collapsed && sleepCheck.collapseFact) {
+      effectiveMs = sleepCheck.nextTimeMs;
+      effectiveCell = sleepCheck.landedCell;
+      effectiveLoc = sleepCheck.landedLocation;
+      const sleepTick = processWorldTick(
+        sleepCheck.nextProtagonist,
+        nextMs,
+        effectiveMs,
+        effectiveLoc,
+        effectiveCell,
+        false
+      );
+      effectiveProtag = {
+        ...sleepTick.finalProtag,
+        lastSleptMs: effectiveMs,
+        lastUpdatedMs: effectiveMs,
+      };
+      effectiveArrivals = [...roamingArrivals, ...sleepTick.roamingArrivals];
+      sleepCollapsedNote = sleepCheck.collapseFact;
+      setGameTimeMs(effectiveMs);
+    }
+
+    const routeText = `${current && protagonist.locationId ? current.name : `Mazgal ${fromCellId}`} → ${target.name} (+${formatTravelHours(travelHours)})`;
+    setLastTimeAction(
+      sleepCollapsedNote
+        ? `Yolda Uykusuzluktan Bayılma (${effectiveLoc?.name ?? `Mazgal ${effectiveCell.id}`})`
+        : notices.length > 0
+        ? `${routeText} · ${notices[0]}`
+        : routeText
+    );
+    setProtagonist(effectiveProtag);
+    if (effectiveLoc) {
+      setPartyLocationId(effectiveLoc.id);
+    }
+
+    const pathSet = new Set(plan.pathIds);
+    const landedInsideIds = new Set(effectiveCell.locationsInside.map((l) => l.id));
     setLocations((prev) => {
       const updated = prev.map((loc) => {
         if (loc.id === id) {
@@ -1411,18 +1662,26 @@ export default function App() {
             nextMs
           );
         }
+        if (
+          pathSet.has(getCellForCoords(loc.x, loc.y).id) ||
+          (sleepCollapsedNote && landedInsideIds.has(loc.id))
+        ) {
+          return { ...loc, discovered: true };
+        }
         return loc;
       });
-      return applyLocationsTick(updated, gameTimeMs, nextMs, finalProtag, roamingArrivals);
+      return applyLocationsTick(updated, gameTimeMs, effectiveMs, effectiveProtag, effectiveArrivals);
     });
 
     setJourneyLog((prev) => [
       {
         id: `log-${Date.now()}`,
-        locationId: target.id,
-        locationName: target.name,
-        timestamp: formatGameDateTime(nextMs),
-        note: `${target.name} bölgesine ${formatTravelHours(travelHours)} yürüyüşle ulaştın.`,
+        locationId: effectiveLoc?.id ?? target.id,
+        locationName: effectiveLoc?.name ?? `Mazgal ${effectiveCell.id}`,
+        timestamp: formatGameDateTime(effectiveMs),
+        note:
+          sleepCollapsedNote ??
+          `${target.name} bölgesine ${formatTravelHours(travelHours)} yürüyüşle ulaştın.`,
       },
       ...prev,
     ]);
@@ -1431,15 +1690,15 @@ export default function App() {
       ...prev.slice(-79),
       createTravelNarrativeNotice(
         {
-          protagonist: finalProtag,
-          currentLocation: target,
-          currentMazgal: targetCell,
+          protagonist: effectiveProtag,
+          currentLocation: effectiveLoc,
+          currentMazgal: effectiveCell,
           allLocations: locations,
           routes,
           activeWeatherKey,
-          gameTimeMs: nextMs,
+          gameTimeMs: effectiveMs,
         },
-        finalProtag.lastObservation
+        sleepCollapsedNote ?? effectiveProtag.lastObservation
       ),
     ]);
   };
@@ -1538,9 +1797,41 @@ export default function App() {
     const target = locations.find((loc) => loc.id === id);
     if (target && !target.discovered) {
       advanceCampaignClock(1, `Keşif: ${target.name}`);
+      const locCellId = getCellForCoords(target.x, target.y).id;
+      setProtagonist((prev) => ({
+        ...prev,
+        visitedMazgalIds: Array.from(
+          new Set([...(prev.visitedMazgalIds ?? [prev.mazgalId]), prev.mazgalId, locCellId])
+        ),
+      }));
     }
     setLocations((prev) =>
       prev.map((loc) => (loc.id === id ? { ...loc, discovered: !loc.discovered } : loc))
+    );
+  };
+
+  const handleToggleMazgalVisited = (mazgalId: string) => {
+    soundFx.playSelectChime();
+    const currentlyVisited = (
+      protagonist.visitedMazgalIds ?? [protagonist.mazgalId]
+    ).includes(mazgalId);
+    if (currentlyVisited && protagonist.mazgalId === mazgalId) return;
+
+    const nextVisited = currentlyVisited
+      ? (protagonist.visitedMazgalIds ?? [protagonist.mazgalId]).filter((id) => id !== mazgalId)
+      : Array.from(
+          new Set([...(protagonist.visitedMazgalIds ?? [protagonist.mazgalId]), mazgalId])
+        );
+
+    setProtagonist((prev) => ({
+      ...prev,
+      visitedMazgalIds: nextVisited,
+    }));
+    setLocations((prev) =>
+      prev.map((loc) => {
+        if (getCellForCoords(loc.x, loc.y).id !== mazgalId) return loc;
+        return { ...loc, discovered: !currentlyVisited };
+      })
     );
   };
 
@@ -1623,7 +1914,7 @@ export default function App() {
     setSelectedMazgalId('G4');
     setDrawerMode('location');
     setInspectorOpen(false);
-    setFogOfWar(false);
+    setFogOfWar(true);
     setActiveWeatherKey('mist');
     setShowRoutes(true);
     setIsPlacingPin(false);
@@ -1749,37 +2040,6 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handlePerformProtagonistAction('observe')}
-              className="rounded border border-[#D4A853]/22 bg-[#17241F] px-2.5 py-1 text-[11px] font-medium text-[#D9D3C4] transition-colors hover:border-[#D4A853]/55 hover:text-[#F8F3E6] whitespace-nowrap cursor-pointer"
-            >
-              Gözlem (+1 Saat)
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePerformProtagonistAction('converse')}
-              className="rounded border border-[#D4A853]/22 bg-[#17241F] px-2.5 py-1 text-[11px] font-medium text-[#D9D3C4] transition-colors hover:border-[#D4A853]/55 hover:text-[#F8F3E6] whitespace-nowrap cursor-pointer"
-            >
-              Konuş (+1 Saat)
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePerformProtagonistAction('help_settlement')}
-              className="rounded border border-[#D4A853]/22 bg-[#17241F] px-2.5 py-1 text-[11px] font-medium text-[#D9D3C4] transition-colors hover:border-[#D4A853]/55 hover:text-[#F8F3E6] whitespace-nowrap cursor-pointer"
-            >
-              Destek Ol (+4 Saat)
-            </button>
-            <button
-              type="button"
-              onClick={() => handlePerformProtagonistAction('rest_camp')}
-              className="rounded border border-[#67C7C0]/30 bg-[#14231F] px-2.5 py-1 text-[11px] font-medium text-[#9CE3DD] transition-colors hover:border-[#67C7C0]/60 hover:bg-[#192D28] whitespace-nowrap cursor-pointer"
-            >
-              Kamp Kur (+8 Saat)
-            </button>
-
-            <span aria-hidden="true" className="mx-0.5 hidden h-4 w-px bg-[#D4A853]/20 sm:inline-block" />
-
             {!confirmReset ? (
               <button
                 type="button"
@@ -1919,8 +2179,6 @@ export default function App() {
                 onToggleFogOfWar={() => setFogOfWar((v) => !v)}
                 onToggleRoutes={() => setShowRoutes((v) => !v)}
                 onToggleSound={() => setSoundEnabled((v) => !v)}
-                onChangeTravelMode={handleChangeTravelMode}
-                onWeatherChanged={handleWeatherChanged}
                 onOpenInspector={() => {
                   setDrawerMode('location');
                   setInspectorOpen(true);
@@ -1934,6 +2192,9 @@ export default function App() {
                 activeModelName={
                   NARRATIVE_MODEL_OPTIONS.find((m) => m.id === aiSettings.model)?.name
                 }
+                inventory={protagonist.inventory}
+                rations={protagonist.rations}
+                silver={protagonist.silver}
                 isFullscreen={isFullscreen}
                 isPending={narrativePending}
                 errorMessage={narrativeError}
@@ -1944,6 +2205,7 @@ export default function App() {
                     : protagonistCurrentCell.terrainLabel
                 }
                 onSubmitAction={handleSubmitNarrativeTurn}
+                onUseQuickItem={handleQuickUseChatboxItem}
                 onRetryFailedAction={() =>
                   failedNarrativeAttempt
                     ? handleSubmitNarrativeTurn(
@@ -2021,6 +2283,7 @@ export default function App() {
                       resetKey={resetKey}
                       onSelectMazgal={handleSelectMazgal}
                       onStepMazgal={handleStepMazgal}
+                      onToggleMazgalVisited={handleToggleMazgalVisited}
                       onApplyMazgalEvent={handleApplyMazgalEvent}
                       onInteractRoamingUnit={handleInteractRoamingUnit}
                       onSelectLocation={handleSelectLocation}

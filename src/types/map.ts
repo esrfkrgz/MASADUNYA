@@ -439,6 +439,8 @@ export interface ProtagonistState {
   travelPace?: TravelPace;
   travelTransport?: TravelTransport;
   lastWeatherUpdateMs?: number;
+  lastSleptMs?: number;
+  visitedMazgalIds?: string[];
 }
 
 export type NarrativeMessageRole = 'narrator' | 'dialogue' | 'player';

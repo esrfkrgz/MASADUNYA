@@ -12,7 +12,7 @@ import type {
   WeatherConditionKey,
 } from '../types/map';
 import { rollDie } from './diceEngine';
-import { INITIAL_GAME_TIME_MS, formatGameDateTime, getDayPhaseLabel } from './gameTime';
+import { INITIAL_GAME_TIME_MS, addGameHours, formatGameDateTime, getDayPhaseLabel } from './gameTime';
 import { getCellForCoords } from './gridEngine';
 import {
   buildInitialNpcMoments,
@@ -118,11 +118,21 @@ export function getProtagonistModifiers(
     physicalMod -= 2;
     notes.push('Yaralı halin fiziksel testlere -2 zorluk getiriyor.');
   }
+  const hoursAwake = getHoursWithoutSleep(protagonist, protagonist.lastUpdatedMs);
+  if (hoursAwake >= 42) {
+    physicalMod -= 2;
+    perceptionMod -= 2;
+    notes.push('Yaklaşık 2 gündür uykusuzsun (-2 Fiziksel, -2 Algı) — bayılma eşiğindesin!');
+  } else if (hoursAwake >= 24) {
+    physicalMod -= 1;
+    perceptionMod -= 1;
+    notes.push('Aşırı yorgunluk ve uykusuzluk (-1 Fiziksel, -1 Algı) — uyuman gerekiyor.');
+  }
   if (protagonist.stamina <= 30) {
     physicalMod -= 1;
     perceptionMod -= 1;
-    notes.push('Yorgunluk dikkat ve dayanıklılığı düşürüyor (-1 Fiziksel, -1 Algı).');
-  } else if (protagonist.stamina >= 80 && protagonist.health >= 85) {
+    notes.push('Zindelik düşüklüğü dikkat ve dayanıklılığı düşürüyor (-1 Fiziksel, -1 Algı).');
+  } else if (protagonist.stamina >= 80 && protagonist.health >= 85 && hoursAwake < 20) {
     physicalMod += 1;
     notes.push('Dinç durumdasın (+1 Fiziksel test avantajı).');
   }
@@ -200,13 +210,24 @@ function pushJournal(
   return [entry, ...journal].slice(0, MAX_JOURNAL);
 }
 
+export function getHoursWithoutSleep(
+  protagonist: ProtagonistState,
+  gameTimeMs: number
+): number {
+  const sleptAt = protagonist.lastSleptMs ?? INITIAL_GAME_TIME_MS;
+  return Math.max(0, (gameTimeMs - sleptAt) / (60 * 60 * 1000));
+}
+
 function updateConditions(
   health: number,
   stamina: number,
   hunger: number,
-  cell?: MazgalCell
+  cell?: MazgalCell,
+  hoursAwake = 0
 ): string[] {
   const next: string[] = [];
+  if (hoursAwake >= 40) next.push('Aşırı Uykusuzluk (Uyumalısın!)');
+  else if (hoursAwake >= 20) next.push('Aşırı Yorgunluk');
   if (health <= 45) next.push('Yaralı (Dinlenme Gerekir)');
   if (stamina <= 30) next.push('Bitkin');
   if (hunger >= 70) next.push('Açlık Hissi');
@@ -253,6 +274,7 @@ export function createInitialProtagonist(locations: MapLocation[]): ProtagonistS
     lastObservation:
       'Soğuk çam iğneleri ve nemli orman yosunlarının üzerinde gözlerini açtın. Geçmişine dair zihnin bembeyaz bir sis perdesinin ardında; hatırladığın tek şey adının Eşref olduğu. 18 yaşındasın, 185 cm boyundaki esmer ve atletik bedenin serin orman havasında diri.',
     lastDialogue: '',
+    visitedMazgalIds: ['G4'],
     journal: [
       {
         id: 'pj-init',
@@ -280,6 +302,7 @@ export function createInitialProtagonist(locations: MapLocation[]): ProtagonistS
     travelPace: 'normal',
     travelTransport: 'foot',
     lastWeatherUpdateMs: INITIAL_GAME_TIME_MS,
+    lastSleptMs: INITIAL_GAME_TIME_MS,
   };
 }
 
@@ -311,6 +334,13 @@ export function hydrateProtagonist(
     travelPace: protagonist.travelPace ?? 'normal',
     travelTransport: protagonist.travelTransport ?? 'foot',
     lastWeatherUpdateMs: protagonist.lastWeatherUpdateMs ?? INITIAL_GAME_TIME_MS,
+    lastSleptMs: protagonist.lastSleptMs ?? protagonist.lastUpdatedMs ?? INITIAL_GAME_TIME_MS,
+    visitedMazgalIds: Array.from(
+      new Set([
+        ...(Array.isArray(protagonist.visitedMazgalIds) ? protagonist.visitedMazgalIds : []),
+        protagonist.mazgalId || 'G4',
+      ])
+    ),
   };
 
   if (protagonist.contacts && protagonist.contacts.length > 0) {
@@ -405,7 +435,7 @@ export function buildContextualObservation(
       cell.safetyScore <= 38
         ? 'Çalılar ve sis gölgeleri pusu ihtimalini artırıyor; elin kabzanın üzerinde yürümen gerekiyor.'
         : cell.safetyScore >= 68
-        ? 'Yakın yerleşimlerin devriye izi sayesinde patika görece sakin görünüyor.'
+        ? 'Patika ve toprak zemin şimdilik görece sakin görünüyor.'
         : 'Arazi sessiz ama iz bırakmadan ilerlemek için dikkatli olmalısın.';
     const staminaNote =
       protagonist.stamina <= 35
@@ -525,6 +555,84 @@ export function buildContextualDialogue(
   };
 }
 
+export function resolveAutomaticTravelPace(
+  protagonist: ProtagonistState,
+  targetCell: MazgalCell,
+  weather: WeatherConditionKey,
+  requestedPace?: TravelPace
+): TravelPace {
+  if (requestedPace === 'stealth') {
+    return 'stealth';
+  }
+  if (requestedPace === 'forced') {
+    if (protagonist.stamina >= 30 && protagonist.health >= 35 && weather !== 'storm') {
+      return 'forced';
+    }
+    return protagonist.health <= 45 || weather === 'storm' ? 'stealth' : 'normal';
+  }
+
+  const isInjuredOrExhausted =
+    protagonist.health <= 45 ||
+    protagonist.stamina <= 25 ||
+    (protagonist.activeConditions ?? []).some((c) => /Yaralı|Bitkin|Kanama/i.test(c));
+  if (weather === 'storm' || targetCell.safetyScore <= 22 || isInjuredOrExhausted) {
+    return 'stealth';
+  }
+
+  if (
+    protagonist.activeWorldWave &&
+    (protagonist.activeWorldWave.kind === 'Eşkıya İttifakı' ||
+      protagonist.activeWorldWave.kind === 'Goblin Akını') &&
+    protagonist.stamina >= 60 &&
+    protagonist.health >= 65 &&
+    weather === 'clear'
+  ) {
+    return 'forced';
+  }
+
+  return 'normal';
+}
+
+export function resolveAutomaticTravelTransport(
+  protagonist: ProtagonistState,
+  targetCell: MazgalCell,
+  requiresBoat: boolean,
+  hasDirectRoute: boolean
+): TravelTransport {
+  const hasBoatItem = (protagonist.inventory ?? []).some(
+    (item) => item.qty > 0 && /kayık|tekne|sal/i.test(item.name)
+  );
+  const hasBoatCompanion = (protagonist.contacts ?? []).some(
+    (c) =>
+      c.partyRelation !== 'independent' &&
+      /salcı|kayık|denizci|tekne/i.test(`${c.name} ${c.role} ${c.trait}`)
+  );
+  if (hasBoatItem || hasBoatCompanion) {
+    return 'boat';
+  }
+  if (requiresBoat && hasDirectRoute) {
+    return 'boat';
+  }
+
+  const hasMountItem = (protagonist.inventory ?? []).some(
+    (item) => item.qty > 0 && /katır|at |araba|binek|yük/i.test(item.name)
+  );
+  const hasMountedCompanion = (protagonist.contacts ?? []).some(
+    (c) =>
+      c.partyRelation !== 'independent' &&
+      /kervan|tüccar|arabacı|atlı|katır/i.test(`${c.name} ${c.role} ${c.trait}`)
+  );
+  if (
+    hasMountItem ||
+    hasMountedCompanion ||
+    (hasDirectRoute && protagonist.activeWorldWave?.kind === 'Ticaret Şenliği')
+  ) {
+    return 'mule';
+  }
+
+  return 'foot';
+}
+
 export function applyProtagonistTravel(
   protagonist: ProtagonistState,
   targetLocation: MapLocation | undefined,
@@ -536,35 +644,51 @@ export function applyProtagonistTravel(
     transport?: TravelTransport;
     weather?: WeatherConditionKey;
     requiresBoat?: boolean;
+    extraVisitedMazgalIds?: string[];
   }
 ): { nextProtagonist: ProtagonistState; localMoraleDelta: number } {
   const ts = formatGameDateTime(nextTimeMs);
-  const pace = options?.pace ?? protagonist.travelPace ?? 'normal';
-  const transport = options?.transport ?? protagonist.travelTransport ?? 'foot';
   const weather = options?.weather ?? 'mist';
   const requiresBoat = options?.requiresBoat ?? (targetCell.terrain === 'lake' || targetCell.terrain === 'sea');
+  const pace =
+    options?.pace ??
+    resolveAutomaticTravelPace(protagonist, targetCell, weather);
+  const transport =
+    options?.transport ??
+    resolveAutomaticTravelTransport(protagonist, targetCell, requiresBoat, false);
 
   const paceStaminaMult = pace === 'forced' ? 1.32 : pace === 'stealth' ? 0.92 : 1.0;
   const transportStaminaMult = transport === 'mule' ? 0.8 : 1.0;
   const weatherStaminaAdd = weather === 'storm' ? 6 : weather === 'rain' ? 3 : 0;
 
+  // No automatic overnight camp: traveling drains stamina & keeps Eşref awake until he rests or collapses!
   const staminaCost = Math.min(
-    55,
-    Math.max(4, Math.round(travelHours * 1.15 * paceStaminaMult * transportStaminaMult) + weatherStaminaAdd)
+    65,
+    Math.max(4, Math.round(travelHours * 1.18 * paceStaminaMult * transportStaminaMult) + weatherStaminaAdd)
   );
-  const hungerGain = Math.min(45, Math.max(3, Math.round(travelHours * (pace === 'forced' ? 1.25 : 1.05))));
+  const hungerGain = Math.min(55, Math.max(3, Math.round(travelHours * (pace === 'forced' ? 1.25 : 1.0))));
 
   let nextHealth = protagonist.health;
   let nextStamina = Math.max(5, protagonist.stamina - staminaCost);
   let nextHunger = Math.min(100, protagonist.hunger + hungerGain);
   let rations = protagonist.rations;
 
-  // Automatically eat 1 ration on long marches (>12h) if hungry and carrying rations
+  // Eat 1 ration on the move if carrying rations and hungry
   let rationNote = '';
   if (travelHours >= 12 && nextHunger >= 55 && rations > 0) {
     rations -= 1;
-    nextHunger = Math.max(10, nextHunger - 40);
-    rationNote = ' Yolda 1 porsiyon erzak tükettin.';
+    nextHunger = Math.max(10, nextHunger - 38);
+    rationNote = ' Yürürken 1 porsiyon kuru erzak atıştırdın.';
+  }
+
+  const hoursAwake = getHoursWithoutSleep(protagonist, nextTimeMs);
+  let fatigueWarningNote = '';
+  if (hoursAwake >= 42) {
+    fatigueWarningNote =
+      ' Yaklaşık 2 gündür gözünü kırpmadın; aşırı yorgunluktan başın dönüyor, artık durup uyumazsan yığılıp kalacaksın!';
+  } else if (hoursAwake >= 22) {
+    fatigueWarningNote =
+      ' Uzun süredir uyumadığın için göz kapakların ağırlaştı; artık bir yerde durup uyuman gerekiyor.';
   }
 
   // Pace, water-crossing & harsh terrain checks
@@ -572,7 +696,7 @@ export function applyProtagonistTravel(
   if (requiresBoat && transport !== 'boat') {
     nextStamina = Math.max(5, nextStamina - 14);
     nextHealth = Math.max(10, nextHealth - 5);
-    travelHazardNote += ' Kayık olmadan su geçişini yüzerek/salla zorladın (-5 Can, -14 Zindelik).';
+    travelHazardNote += ' Kayık olmadan sığ geçidi/suyu zorlayarak aştın (-5 Can, -14 Zindelik).';
   }
 
   if (pace === 'forced' && travelHours >= 10) {
@@ -584,7 +708,7 @@ export function applyProtagonistTravel(
   }
 
   const hazardProb =
-    (pace === 'stealth' ? 0.1 : pace === 'forced' ? 0.34 : 0.25) +
+    (pace === 'stealth' ? 0.1 : pace === 'forced' ? 0.34 : 0.22) +
     (weather === 'storm' ? 0.12 : 0);
 
   if (travelHours >= 10 && targetCell.safetyScore <= 42 && Math.random() < hazardProb) {
@@ -601,7 +725,26 @@ export function applyProtagonistTravel(
     nextHunger,
     targetCell.safetyScore
   );
-  const conditions = updateConditions(nextHealth, nextStamina, nextHunger, targetCell);
+  const conditions = updateConditions(nextHealth, nextStamina, nextHunger, targetCell, hoursAwake);
+  if ((protagonist.activeConditions ?? []).includes('Hafıza Kaybı') && !conditions.includes('Hafıza Kaybı')) {
+    conditions.unshift('Hafıza Kaybı');
+  }
+  if (
+    travelHours < 4 &&
+    (protagonist.activeConditions ?? []).includes('Meşale Işığı') &&
+    !conditions.includes('Meşale Işığı')
+  ) {
+    conditions.push('Meşale Işığı');
+  }
+
+  const nextVisitedMazgalIds = Array.from(
+    new Set([
+      ...(protagonist.visitedMazgalIds ?? [protagonist.mazgalId]),
+      protagonist.mazgalId,
+      ...(options?.extraVisitedMazgalIds ?? []),
+      targetCell.id,
+    ])
+  );
 
   const draft: ProtagonistState = {
     ...protagonist,
@@ -614,8 +757,11 @@ export function applyProtagonistTravel(
     hunger: nextHunger,
     rations,
     mood: nextMood,
-    activeConditions: conditions,
+    activeConditions: conditions.slice(0, 4),
+    travelPace: pace,
+    travelTransport: transport,
     lastUpdatedMs: nextTimeMs,
+    visitedMazgalIds: nextVisitedMazgalIds,
   };
 
   const observation = buildContextualObservation(draft, targetLocation, targetCell, nextTimeMs);
@@ -644,17 +790,174 @@ export function applyProtagonistTravel(
   return {
     nextProtagonist: {
       ...draft,
-      lastObservation: `${observation}${rationNote}${travelHazardNote}`,
+      lastObservation: `${observation}${fatigueWarningNote}${rationNote}${travelHazardNote}`,
       journal: pushJournal(protagonist.journal, {
         id: `pj-move-${Date.now()}`,
         timestamp: ts,
         kind: 'Yolculuk',
         locationLabel: placeName,
         title: `${placeName} Bölgesine Ulaştın${paceBadge}${transportBadge}`,
-        detail: `${observation}${rationNote}${travelHazardNote}`,
+        detail: `${observation}${fatigueWarningNote}${rationNote}${travelHazardNote}`,
       }),
     },
     localMoraleDelta,
+  };
+}
+
+export function evaluateSleepDeprivationAndCollapse(params: {
+  protagonist: ProtagonistState;
+  currentCell: MazgalCell;
+  mazgalCells: MazgalCell[];
+  locations: MapLocation[];
+  gameTimeMs: number;
+  duringTravel?: boolean;
+}): {
+  collapsed: boolean;
+  hoursAwake: number;
+  sleepHours: number;
+  nextTimeMs: number;
+  nextProtagonist: ProtagonistState;
+  landedCell: MazgalCell;
+  landedLocation?: MapLocation;
+  movedCell: boolean;
+  collapseFact?: string;
+} {
+  const { protagonist, currentCell, mazgalCells, locations, gameTimeMs, duringTravel } = params;
+  const hoursAwake = getHoursWithoutSleep(protagonist, gameTimeMs);
+
+  // Trigger involuntary collapse between 48 and 72 hours (2-3 days) without sleep
+  const shouldCollapse =
+    hoursAwake >= 48 &&
+    (hoursAwake >= 68 ||
+      (protagonist.stamina <= 12 && hoursAwake >= 48) ||
+      (duringTravel && hoursAwake >= 52 && Math.random() < 0.7) ||
+      Math.random() < (hoursAwake - 46) * 0.045);
+
+  if (!shouldCollapse) {
+    return {
+      collapsed: false,
+      hoursAwake,
+      sleepHours: 0,
+      nextTimeMs: gameTimeMs,
+      nextProtagonist: protagonist,
+      landedCell: currentCell,
+      landedLocation: protagonist.locationId
+        ? locations.find((l) => l.id === protagonist.locationId)
+        : undefined,
+      movedCell: false,
+    };
+  }
+
+  const sleepHours = 6 + rollDie(5); // 7-11 hours unconscious sleep
+  const nextTimeMs = addGameHours(gameTimeMs, sleepHours);
+  const ts = formatGameDateTime(nextTimeMs);
+
+  // Determine a random dry-land spot where Eşref collapsed in a daze
+  const dryNeighbors = currentCell.neighbors
+    .map((nb) => mazgalCells.find((c) => c.id === nb.id))
+    .filter(
+      (c): c is MazgalCell =>
+        Boolean(c && c.terrain !== 'lake' && c.terrain !== 'sea')
+    );
+
+  const wanderOffCourse =
+    dryNeighbors.length > 0 && (duringTravel ? Math.random() < 0.65 : Math.random() < 0.4);
+  const landedCell = wanderOffCourse
+    ? dryNeighbors[Math.floor(Math.random() * dryNeighbors.length)]
+    : currentCell;
+  const movedCell = landedCell.id !== currentCell.id;
+
+  // Random coordinates inside the landed cell (so he wakes up in an unfamiliar/random spot)
+  const randX = Number(
+    Math.max(2, Math.min(98, landedCell.centerX + (Math.random() - 0.5) * 4.2)).toFixed(1)
+  );
+  const randY = Number(
+    Math.max(2, Math.min(98, landedCell.centerY + (Math.random() - 0.5) * 6.5)).toFixed(1)
+  );
+  const landedLocation = landedCell.locationsInside[0];
+
+  let nextHealth = protagonist.health;
+  const nextStamina = Math.min(72, protagonist.stamina + 38 + rollDie(12));
+  const nextHunger = Math.min(100, protagonist.hunger + 10);
+  let nextSilver = protagonist.silver;
+  let nextRations = protagonist.rations;
+  let exposureNote = '';
+
+  if (landedCell.safetyScore <= 42 && Math.random() < 0.45) {
+    if (nextSilver >= 2 && Math.random() < 0.45) {
+      const lost = Math.min(nextSilver, 1 + rollDie(2));
+      nextSilver -= lost;
+      exposureNote = ` Açıkta savunmasız uyurken kesenden ${lost} Gümüş eksilmiş.`;
+    } else if (nextRations >= 1 && Math.random() < 0.4) {
+      nextRations -= 1;
+      exposureNote = ' Açıkta uyurken çantandaki erzaklardan 1 porsiyonu hayvanlara veya soğuğa kaptırmışsın.';
+    } else {
+      const coldDmg = 4 + rollDie(5);
+      nextHealth = Math.max(10, nextHealth - coldDmg);
+      exposureNote = ` Korumasız toprakta uyuyakaldığın için soğuk ve sert zemin canını yaktı (-${coldDmg} Can).`;
+    }
+  }
+
+  const conditions = updateConditions(nextHealth, nextStamina, nextHunger, landedCell, 0);
+  if (
+    (protagonist.activeConditions ?? []).includes('Hafıza Kaybı') &&
+    !conditions.includes('Hafıza Kaybı')
+  ) {
+    conditions.unshift('Hafıza Kaybı');
+  }
+
+  const nextVisited = Array.from(
+    new Set([
+      ...(protagonist.visitedMazgalIds ?? [protagonist.mazgalId]),
+      landedCell.id,
+    ])
+  );
+
+  const wakePlaceDesc = landedLocation
+    ? `${landedLocation.name} yakınlarında kuytu bir köşede`
+    : `${landedCell.terrainLabel.toLowerCase()} içinde rastgele bir açıklıkta`;
+
+  const collapseFact = `AŞIRI UYKUSUZLUK VE BAYGINLIK (${Math.round(
+    hoursAwake
+  )} saat uykusuz kaldıktan sonra): Gözlerin karardı, bilincin kapandı ve nerede olduğunu bile anlamadan ${wakePlaceDesc} yığılıp uyuyakaldın. Yaklaşık ${sleepHours} saat sonra sızlayan kemiklerinle gözlerini açtın (Can: ${nextHealth}/100, Zindelik: ${nextStamina}/100).${exposureNote}`;
+
+  const nextProtagonist: ProtagonistState = {
+    ...protagonist,
+    locationId: landedLocation?.id ?? null,
+    mazgalId: landedCell.id,
+    x: landedLocation ? landedLocation.x : randX,
+    y: landedLocation ? landedLocation.y : randY,
+    health: nextHealth,
+    stamina: nextStamina,
+    hunger: nextHunger,
+    silver: nextSilver,
+    rations: nextRations,
+    activeConditions: conditions.slice(0, 4),
+    mood: computeProtagonistMood(nextHealth, nextStamina, nextHunger, landedCell.safetyScore),
+    lastSleptMs: nextTimeMs,
+    lastUpdatedMs: nextTimeMs,
+    lastObservation: collapseFact,
+    visitedMazgalIds: nextVisited,
+    journal: pushJournal(protagonist.journal, {
+      id: `pj-collapse-${Date.now()}`,
+      timestamp: ts,
+      kind: 'Durum',
+      locationLabel: landedLocation ? landedLocation.name : landedCell.terrainLabel,
+      title: 'Uykusuzluktan Yığılıp Kaldın',
+      detail: collapseFact,
+    }),
+  };
+
+  return {
+    collapsed: true,
+    hoursAwake,
+    sleepHours,
+    nextTimeMs,
+    nextProtagonist,
+    landedCell,
+    landedLocation,
+    movedCell,
+    collapseFact,
   };
 }
 
@@ -663,7 +966,8 @@ export function performProtagonistAction(
   actionType: ProtagonistActionType,
   currentLocation: MapLocation | undefined,
   currentCell: MazgalCell,
-  nextTimeMs: number
+  nextTimeMs: number,
+  elapsedMinutes?: number
 ): {
   nextProtagonist: ProtagonistState;
   locationMoraleDelta: number;
@@ -689,18 +993,25 @@ export function performProtagonistAction(
   let title = '';
   let detail = '';
   let kind: ProtagonistEventRecord['kind'] = 'Eylem';
+  let lastSleptMs = protagonist.lastSleptMs ?? INITIAL_GAME_TIME_MS;
 
   if (actionType === 'observe') {
+    const mins = typeof elapsedMinutes === 'number' ? Math.max(0, elapsedMinutes) : 60;
+    const staminaLoss = mins <= 5 ? 0 : Math.max(1, Math.round((4 * Math.min(60, mins)) / 60));
+    const hungerGain = mins <= 10 ? 0 : Math.max(1, Math.round((4 * Math.min(60, mins)) / 60));
     kind = 'Gözlem';
-    stamina = Math.max(5, stamina - 4);
-    hunger = Math.min(100, hunger + 4);
+    stamina = Math.max(5, stamina - staminaLoss);
+    hunger = Math.min(100, hunger + hungerGain);
     lastObservation = buildContextualObservation(protagonist, currentLocation, currentCell, nextTimeMs);
     title = `${placeLabel} Gözlemi`;
     detail = lastObservation;
   } else if (actionType === 'converse') {
+    const mins = typeof elapsedMinutes === 'number' ? Math.max(0, elapsedMinutes) : 60;
+    const staminaLoss = mins <= 5 ? 0 : Math.max(1, Math.round((3 * Math.min(60, mins)) / 60));
+    const hungerGain = mins <= 10 ? 0 : Math.max(1, Math.round((4 * Math.min(60, mins)) / 60));
     kind = 'Konuşma';
-    stamina = Math.max(5, stamina - 3);
-    hunger = Math.min(100, hunger + 4);
+    stamina = Math.max(5, stamina - staminaLoss);
+    hunger = Math.min(100, hunger + hungerGain);
     const dlg = buildContextualDialogue(protagonist, currentLocation, currentCell);
     lastDialogue = `${dlg.speaker}: ${dlg.line}`;
     if (dlg.repDelta !== 0 && currentLocation) {
@@ -750,25 +1061,33 @@ export function performProtagonistAction(
     }
     lastObservation = detail;
   } else if (actionType === 'rest_camp') {
+    lastSleptMs = nextTimeMs;
     if (rations > 0) {
       rations -= 1;
       hunger = Math.max(0, hunger - 45);
       stamina = Math.min(100, stamina + 50);
       health = Math.min(100, health + 22);
       title = `${placeLabel} Dinlenme ve Kamp`;
-      detail = `1 porsiyon erzak yiyip 8 saat dinlendin. Can (+22) ve Zindelik (+50) toparlandı.`;
+      detail = `1 porsiyon erzak yiyip 8 saat uyuyup dinlendin. Can (+22) ve Zindelik (+50) toparlandı.`;
     } else {
       hunger = Math.min(100, hunger + 15);
       stamina = Math.min(85, stamina + 28);
       health = Math.min(100, health + 8);
       title = `${placeLabel} Erzağı Eksik Kamp`;
-      detail = `Erzağın kalmadığı için aç karnına dinlendin; Zindelik kısmen (+28) toplandı ancak açlık arttı.`;
+      detail = `Erzağın kalmadığı için aç karnına uyuyup dinlendin; Zindelik kısmen (+28) toplandı ancak açlık arttı.`;
     }
     lastObservation = detail;
   }
 
+  const hoursAwake = getHoursWithoutSleep({ ...protagonist, lastSleptMs }, nextTimeMs);
   const mood = computeProtagonistMood(health, stamina, hunger, currentCell.safetyScore);
-  const activeConditions = updateConditions(health, stamina, hunger, currentCell);
+  const activeConditions = updateConditions(health, stamina, hunger, currentCell, hoursAwake);
+  if (
+    (protagonist.activeConditions ?? []).includes('Hafıza Kaybı') &&
+    !activeConditions.includes('Hafıza Kaybı')
+  ) {
+    activeConditions.unshift('Hafıza Kaybı');
+  }
 
   return {
     nextProtagonist: {
@@ -781,9 +1100,10 @@ export function performProtagonistAction(
       playerMorality,
       mood,
       reputation,
-      activeConditions,
+      activeConditions: activeConditions.slice(0, 4),
       lastObservation,
       lastDialogue,
+      lastSleptMs,
       lastUpdatedMs: nextTimeMs,
       journal: pushJournal(protagonist.journal, {
         id: `pj-act-${Date.now()}`,
@@ -843,8 +1163,15 @@ export function applyEncounterResultToProtagonist(
     detail = `"${encounterTitle}" karşısında geri çekilerek canını kurtardın (-18 Zindelik).`;
   }
 
+  const hoursAwake = getHoursWithoutSleep(protagonist, nextTimeMs);
   const mood = computeProtagonistMood(health, stamina, protagonist.hunger, cell.safetyScore);
-  const activeConditions = updateConditions(health, stamina, protagonist.hunger, cell);
+  const activeConditions = updateConditions(health, stamina, protagonist.hunger, cell, hoursAwake);
+  if (
+    (protagonist.activeConditions ?? []).includes('Hafıza Kaybı') &&
+    !activeConditions.includes('Hafıza Kaybı')
+  ) {
+    activeConditions.unshift('Hafıza Kaybı');
+  }
 
   return {
     nextProtagonist: {
@@ -856,7 +1183,7 @@ export function applyEncounterResultToProtagonist(
       mood,
       reputation,
       marks,
-      activeConditions,
+      activeConditions: activeConditions.slice(0, 4),
       lastObservation: detail,
       lastUpdatedMs: nextTimeMs,
       journal: pushJournal(protagonist.journal, {
@@ -923,8 +1250,15 @@ export function applyMazgalEventToProtagonist(
     detail = `${cell.terrainLabel} arazi ve hava koşulu ("${eventTitle}") seni yavaşlattı. ${outcomeNote}`;
   }
 
+  const hoursAwake = getHoursWithoutSleep(protagonist, nextTimeMs);
   const mood = computeProtagonistMood(health, stamina, hunger, cell.safetyScore);
-  const activeConditions = updateConditions(health, stamina, hunger, cell);
+  const activeConditions = updateConditions(health, stamina, hunger, cell, hoursAwake);
+  if (
+    (protagonist.activeConditions ?? []).includes('Hafıza Kaybı') &&
+    !activeConditions.includes('Hafıza Kaybı')
+  ) {
+    activeConditions.unshift('Hafıza Kaybı');
+  }
 
   return {
     nextProtagonist: {
@@ -936,7 +1270,7 @@ export function applyMazgalEventToProtagonist(
       silver,
       mood,
       reputation,
-      activeConditions,
+      activeConditions: activeConditions.slice(0, 4),
       lastObservation: detail,
       lastUpdatedMs: nextTimeMs,
       journal: pushJournal(protagonist.journal, {

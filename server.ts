@@ -15,7 +15,8 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const DEFAULT_MODEL_NAME = 'gemini-4-hydrogen';
-const ANYTHINKLLM_BASE_URL = process.env.ANYTHINKLLM_BASE_URL || 'http://localhost:3001/api/v1/openai';
+const ANYTHINKLLM_BASE_URL =
+  process.env.ANYTHINKLLM_BASE_URL || 'http://localhost:3001/api/v1/openai';
 const ANYTHINKLLM_API_KEY = process.env.ANYTHINKLLM_API_KEY || '';
 const ANYTHINKLLM_MODEL = process.env.ANYTHINKLLM_MODEL || 'gpt-4o';
 
@@ -46,7 +47,11 @@ function stripReasoningText(raw: string): string {
     .trim();
 }
 
-function coerceNarrativeChoice(raw: unknown): { label: string; actionPrompt: string; kind: string } {
+function coerceNarrativeChoice(raw: unknown): {
+  label: string;
+  actionPrompt: string;
+  kind: string;
+} {
   const record = (raw ?? {}) as Record<string, unknown>;
   const label =
     typeof record.label === 'string'
@@ -101,7 +106,9 @@ function readableNarrativeText(raw: string): string {
     .replace(/^\s*\{[\s\S]*\}\s*$/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}function extractJsonObject(raw: string): Record<string, unknown> | null {
+}
+
+function extractJsonObject(raw: string): Record<string, unknown> | null {
   if (!raw) return null;
   let text = stripReasoningText(raw).replace(/```json/gi, '```');
   const fenced = text.match(/```([\s\S]*?)```/);
@@ -216,7 +223,12 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
           type: Type.STRING,
           enum: ['self_and_pockets', 'tracks_and_area', 'climb_vantage', 'listen_rumors'],
           description:
-            'self_and_pockets: üst-baş, cep, eşya ve hafıza yoklama; tracks_and_area: arazi ve iz inceleme; climb_vantage: ağaç/tepeye tırmanıp etrafı görme; listen_rumors: yerleşimde söylenti ve yerel havayı dinleme.',
+            'self_and_pockets: üst-baş, cep, eşya ve hafıza yoklama; tracks_and_area: arazi, kişi veya iz inceleme; climb_vantage: ağaç/tepeye tırmanıp etrafı görme; listen_rumors: yerleşimde söylenti ve yerel havayı dinleme.',
+        },
+        durationMinutes: {
+          type: Type.INTEGER,
+          description:
+            'Eylemin ne kadar süreceği (dakika cinsinden, 1–60 arası). Birine sadece bakmak veya etrafa hızlıca göz atmak için 1–2 dk, ceplere/üzerine bakmak için 2–5 dk, detaylı iz sürmek/ağaca tırmanmak/söylenti toplamak için 15–45 dk seç.',
         },
         note: {
           type: Type.STRING,
@@ -279,7 +291,7 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'interact_npc_or_group',
     description:
-      'Yakındaki bir yoldaş, NPC, yerleşim sakini veya gezgin grupla konuşur, flört eder, ikna/cazibe dener, yüzleşir ya da ticaret/yardım iletişimi kurar.',
+      'Yakındaki bir yoldaş, NPC, yerleşim sakini veya gezgin grupla selamlaşır, konuşur, flört eder, ikna/cazibe dener, yüzleşir ya da ticaret/yardım iletişimi kurar.',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -298,6 +310,11 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
             'greet_trade',
           ],
           description: 'Etkileşim tonu ve niyeti.',
+        },
+        durationMinutes: {
+          type: Type.INTEGER,
+          description:
+            'Etkileşimin süreceği dakika (1–90 arası). Kısa selamlaşma ("merhaba", "selam", baş selamı) veya tek cümlelik soru için 1–3 dk; olağan sohbet/pazarlık için 10–25 dk; uzun ikna, flört veya eşlik için 30–60 dk seç.',
         },
       },
       required: ['tone'],
@@ -342,14 +359,15 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'camp_forage_or_aid',
     description:
-      'Kamp kurup dinlenmeyi, ormanda/bölgede avlanıp çalışmayı veya bir yerleşimin aktif sorununu çözmeye yardım etmeyi yürütür.',
+      'Kamp kurup dinlenmeyi (+8 saat), ormanda/bölgede avlanıp çalışmayı (+3 saat) veya yerleşime/soruna destek olmayı (+4 saat) yürütür.',
     parameters: {
       type: Type.OBJECT,
       properties: {
         activity: {
           type: Type.STRING,
-          enum: ['rest_camp', 'forage_or_work', 'help_settlement_problem'],
-          description: 'Yapılacak kamp, iş veya yardım faaliyeti.',
+          enum: ['rest_camp', 'forage_or_work', 'help_settlement', 'help_settlement_problem'],
+          description:
+            'rest_camp: kamp kurma ve dinlenme (+8 saat); forage_or_work: avlanma veya çalışma (+3 saat); help_settlement: yerleşime destek olma (+4 saat); help_settlement_problem: belirli bir yerel sorunu çözmeye yardım (+3 saat).',
         },
         problemHint: {
           type: Type.STRING,
@@ -362,7 +380,7 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'free_roleplay_action',
     description:
-      'Diğer mekanik araçların kapsamına girmeyen yaratıcı rol yapma hareketleri için kullanılır (ör. ağaca bez bağlamak, kılıcı bilemek, suya bakmak, sessizce beklemek).',
+      'Diğer mekanik araçların kapsamına girmeyen yaratıcı rol yapma hareketleri için kullanılır (ör. birine bakmak, gülümsemek, ağaca bez bağlamak, kılıcı bilemek, nöbet tutmak, beklemek, ateş yakmak).',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -371,9 +389,19 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
           enum: ['none', 'light', 'moderate'],
           description: 'Eylemin harcadığı fiziksel efor.',
         },
+        minutesSpent: {
+          type: Type.INTEGER,
+          description:
+            'Eylemin doğasına göre geçmesi gereken süre (dakika cinsinden, 0–720 arası). Ör: sadece birine bakmak/gülümsemek/tek söz söylemek 1 dk (veya 0); ateş yakmak/kamp hazırlığı 10–20 dk; kılıç bilemek/yemek yapmak 25–45 dk; uzun nöbet veya bekleyiş 60–360 dk.',
+        },
+        hoursSpent: {
+          type: Type.INTEGER,
+          description:
+            'Yalnızca saat bazlı uzun eylemler için (minutesSpent verilmediyse 0–12 saat).',
+        },
         advanceOneHour: {
           type: Type.BOOLEAN,
-          description: 'Eylem anlamlı bir süre alıyorsa saati 1 saat ilerlet.',
+          description: 'Eski uyumluluk alanı; mümkünse bunun yerine minutesSpent kullan.',
         },
         summary: {
           type: Type.STRING,
@@ -391,22 +419,46 @@ Ana karakter Eşref: 18 yaşında, 185 cm boyunda, esmer, atletik ve karizmatik 
 GÖREVİN (ADIM 1 - ARAÇ ÇAĞIRMA):
 - Oyuncunun yazdığı eylemi (karmaşık veya çok aşamalı olsa bile) dikkatle analiz et ve mevcut oyun bağlamına göre doğru motor araçlarını çağır.
 - ÖNEMLİ: Tek bir cümlede birden fazla aşama varsa birden fazla araç çağırabilirsin. Örneğin:
-  * "Yosunlardaki izleri inceleyip izlerin yönüne gizlice yürüyorum" -> Önce inspect_self_and_surroundings(tracks_and_area) çağır, motordan gerçek yön sonucunu aldıktan sonra ikinci adımda travel_direction çağır.
+  * "Yosunlardaki izleri inceleyip izlerin yönüne gizlice yürüyorum" -> Önce inspect_self_and_surroundings(tracks_and_area, durationMinutes: 10) çağır, motordan gerçek yön sonucunu aldıktan sonra ikinci adımda travel_direction çağır.
   * "Erzak yiyip güneye yürüyorum" -> use_inventory_or_eat(rations) ve travel_direction(Güney) çağır.
+- ZAMAN AKIŞI (GERÇEKÇİ DAKİKA & SAAT): Zamanı eylemin gerçek boyutuna göre ilerlet! Kısa anlık eylemlerde ASLA 1 saat geçirme:
+  * Birine sadece bakmak, hızlıca etrafa göz atmak, "merhaba/selam" demek veya tek cümlelik kısa bir şey sormak 1–3 dakika sürer (durationMinutes: 1 veya 2; ya da free_roleplay_action minutesSpent: 1).
+  * Ceplerini/üzerini yoklamak 2–5 dk; dikkatli iz incelemek, ağaca tırmanmak veya handa söylenti toplamak 15–30 dk; ciddi sohbet/pazarlık/ikna 15–45 dk sürer.
+  * Avlanma/iş +3 saat, yerleşime destek/yardım +4 saat, kamp/dinlenme +8 saat; serbest eylemlerde eylemin gerçekçi süresine uygun minutesSpent (0–720 dk) seç.
 - Dünya kuralları dışındaki imkânsız şeyler (büyüyle uçmak, ejderha çağırmak vb.) için sahte başarı üretme; free_roleplay_action ile gerçekçi sınırlar içinde değerlendir.
+- EPİSTEMİK BİLGİ SINIRI: Yalnızca [Bilinen Yerleşim ve Noktalar] listesindeki yerler için travel_to_settlement çağır; keşfedilmemiş yerleşimleri, gizli goblin/haydut kamplarını veya klan adlarını asla araç argümanlarına ekleme.
 - Her turda mutlaka en az bir uygun aracı çağır; araç sonucu olmadan rastgele olay uydurma.
 - Araç çağrıları tamamlandığında ek araç gerekmiyorsa kısa bir "Hazır" notu bırakabilirsin.`;
 
 const NARRATOR_SYSTEM_INSTRUCTION = `Sen "Sisli Doğu Atlası" masaüstü RPG oyununun baş anlatıcısı ve NPC sesisin.
 Ana karakter Eşref (18 yaşında, 185 cm, esmer, atletik, karizmatik; hafıza kaybı yaşıyor).
 
-KESİN KURALLAR:
-1. YALNIZCA motor tarafından doğrulanmış [KESİN MOTOR SONUÇLARI] ve [DÜNYA BAĞLAMI] içindeki gerçek olaylara sadık kal. Olmayan eşya, gümüş, NPC, yerleşim veya zar başarısı uydurma.
-2. Eğer motor başarısız bir zar, yaralanma, reddedilme veya "etrafta kimse yok" sonucu döndürdüyse bunu sahneye dürüstçe ve atmosferik biçimde yansıt.
-3. ASLA "G4", "G5", "H4", "mazgal", "karesi" gibi teknik harita/ızgara kodları kullanma! Mekânları yalnızca atmosferik arazi dokusu, doğa unsurları, yönler (kuzey, güneybatı vb.) veya gerçek yerleşim adlarıyla anlat.
-4. Dil: Akıcı, edebi ama gereksiz uzatmadan 2–4 cümlelik sürükleyici Türkçe.
-5. Eğer bir NPC veya gezgin grup doğrudan Eşref'e karşılık verdiyse role="dialogue", speaker="<Kişi/Grup Adı>" seç ve tırnak içi veya doğrudan konuşma üslubuyla yaz; aksi hâlde role="narrator", speaker="Anlatıcı" kullan.
-6. Her yanıtın sonunda Eşref'in o anki durumuna ve çevresine uygun TAM 4 ADET kısa, çeşitli devam seçeneği (choices) üret.`;
+=== 1. SİSLİ ORMAN FİZİĞİ VE SINIRLI GÖRÜŞ MESAFESİ (ZORUNLU) ===
+- Eşref devasa, soğuk ve kesif sisle kaplı bir sınır ormanındadır; her bölge ~18 fersah (~90 km) genişliğindedir ve görüş alanı [Işık ve Görüş Sınırı] satırındaki fiziksel yarıçapla (ormanda genellikle 15–30 metre, yoğun sis/fırtınada 10–18 metre, meşalesiz gecede yalnızca ~5 metre) KESİNLİKLE sınırlıdır.
+- DUYUSAL ÇEMBER KURALI: Yalnızca Eşref'in şu an bulunduğu noktada kendi beş duyusuyla (görebildiği dar sis çemberi, adım attığı toprak/yosun, yakındaki ağaç gövdeleri, işitebildiği yakın hışırtı/ayak sesi, tenindeki soğuk rüzgar, burnuna gelen ıslak çam/reçine kokusu) doğrudan deneyimleyebileceği şeyleri anlat.
+- Sisin, sık ağaçların veya gece karanlığının ötesindeki uzak vadileri, komşu arazileri, ufuktaki gölleri, köyleri, kuleleri, kamp ateşlerini veya kilometrelerce öteden yükselen dumanları GÖRÜNÜR KILMA. Görüş 5–30 metre iken uzak manzara tasvir etmek yasaktır.
+
+=== 2. EPİSTEMİK BİLGİ SINIRI — GİZLİ KAMPLAR VE UZAK OLAYLAR YASAĞI ===
+- Oyun motoru arka planda tüm haritayı ve tehlikeleri bilir; ANCAK Eşref hafızasını yitirmiştir ve dünyayı sıfırdan, adım adım keşfetmektedir. Anlatıcının bildiği dünya sırrını Eşref'in bilmesine İMKÂN YOKTUR.
+- ŞU BİLGİLERİ DOĞRUDAN VEYA DOLAYLI OLARAK ASLA AÇIK ETME:
+  a) Keşfedilmemiş köy, kale, han, harabe veya gizli goblin/kobold inleri ve haydut kampları (hem özel adları hem de sisin/dağın ardında saklandıkları gerçeği kesinlikle yasaktır).
+  b) Uzak veya keşfedilmemiş yerleşimlerde yaşanan baskınlar, hırsızlıklar, kaybolan kervanlar, vergi krizleri veya perde arkası klan planları (Eşref'in şu an bulunduğu yerde duyup görmesi imkânsız olan hiçbir uzak olay).
+  c) Henüz tanışılmamış NPC adları, gizli kabile/klan isimleri veya gölge düşmanların kimlikleri.
+- Yalnızca [DÜNYA BAĞLAMI] içindeki "Bilinen Yerleşim ve Noktalar" ile "Yanındaki / Konumdaki Kişiler" listelerinde yer alan isimleri kullanabilirsin.
+- Sahnede kimliği belirsiz bir grup veya tehlike varsa, bunu yalnızca Eşref'in o anda gördüğü/duyduğu fiziksel belirtilerle anlat (ör. "sisin içinden çıkan kısa boylu, paslı silahlı karartılar", "çalılıkların ardında metal tıngırtısı"); asla özel klan adı, geldikleri gizli kamp adı veya arka plan niyeti söyleme.
+
+=== 3. MOTOR GERÇEKLİĞİ VE UYDURMA YASAĞI ===
+- YALNIZCA motor tarafından doğrulanmış [KESİN MOTOR SONUÇLARI] ve [DÜNYA BAĞLAMI] içindeki gerçek olaylara sadık kal. Olmayan eşya, gümüş, NPC, yerleşim, zar başarısı, kamp ateşi, duman, iskele, matara, sandık, mektup veya iz ASLA uydurma.
+- Eğer motor başarısız bir zar, yaralanma, reddedilme veya "etrafta kimse yok" sonucu döndürdüyse bunu sahneye dürüstçe ve atmosferik biçimde yansıt.
+- HARİTA YÖNÜ TUTARLILIĞI: Yönleri anlatırken yalnızca [Ulaşılabilir Yönler] listesindeki gerçek verilere sadık kal. "Sis ve örtü ardı görünmüyor" yazan bir yönde göl, dağ veya yerleşim varmış gibi yazma.
+- ASLA "G4", "G5", "H4", "mazgal", "karesi" gibi teknik harita/ızgara kodları kullanma! Mekânları yalnızca atmosferik arazi dokusu, doğa unsurları, yönler (kuzey, güneybatı vb.) veya Eşref'in bildiği gerçek yer adlarıyla anlat.
+
+=== 4. ÜSLUP, UYKUSUZLUK VE 4 SEÇENEK KURALI ===
+- Dil: Akıcı, edebi ama gereksiz uzatmadan 2–4 cümlelik sürükleyici Türkçe.
+- Bir NPC veya gezgin grup doğrudan Eşref'e karşılık verdiyse role="dialogue", speaker="<Kişi/Grup Adı>" seç ve doğrudan konuşma üslubuyla yaz; aksi hâlde role="narrator", speaker="Anlatıcı" kullan.
+- [Uykusuzluk Durumu] veya [KESİN MOTOR SONUÇLARI] içinde uykusuzluk uyarısı varsa yorgunluğu hissettir; "AŞIRI UYKUSUZLUK VE BAYGINLIK" sonucu gelirse Eşref'in bilincinin kapanıp nerede olduğunu anlamadan yığıldığını ve saatler sonra rastgele yabancı bir noktada gözlerini açtığını anlat.
+- Her yanıtın sonunda Eşref'in o anki duyusal durumuna uygun TAM 4 ADET kısa, çeşitli devam seçeneği (choices) üret.
+- ÖNERİLEN 4 SEÇENEKTE DE SİS VE BİLGİ SINIRI GEÇERLİDİR: Hem "label" hem "actionPrompt" içinde keşfedilmemiş yer/kamp/klan adları, uzak olaylar, sahnede olmayan nesneler (sönmüş ateş, hayali iskele vb.) veya Eşref'in bilmesinin imkânsız olduğu hedefler ASLA yer alamaz.`;
 
 const NARRATIVE_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -422,21 +474,25 @@ const NARRATIVE_RESPONSE_SCHEMA = {
     },
     text: {
       type: Type.STRING,
-      description: '2-4 cümlelik akıcı, motor sonuçlarıyla %100 tutarlı Türkçe anlatı veya diyalog.',
+      description:
+        '2-4 cümlelik akıcı, motor sonuçlarıyla %100 tutarlı Türkçe anlatı veya diyalog. Eşrefin bilmediği keşfedilmemiş yer, klan veya NPC adlarını ASLA içermez.',
     },
     choices: {
       type: Type.ARRAY,
-      description: 'Sonraki hamle için 4 adet kısa ve anlamlı eylem önerisi.',
+      description:
+        'Sonraki hamle için 4 adet kısa ve anlamlı eylem önerisi. Eşrefin henüz bilmediği yerleşim, klan veya gizli bilgi adlarını ASLA içermez.',
       items: {
         type: Type.OBJECT,
         properties: {
           label: {
             type: Type.STRING,
-            description: 'Butonda görünecek kısa etiket (3-7 kelime).',
+            description:
+              'Butonda görünecek kısa etiket (3-7 kelime); keşfedilmemiş yer/klan adı içeremez.',
           },
           actionPrompt: {
             type: Type.STRING,
-            description: 'Seçildiğinde Eşref ağzından gönderilecek birinci tekil şahıs cümlesi.',
+            description:
+              'Seçildiğinde Eşref ağzından gönderilecek birinci tekil şahıs cümlesi; Eşrefin henüz bilmediği yer/klan adı veya sırrı içeremez.',
           },
           kind: {
             type: Type.STRING,
@@ -466,6 +522,16 @@ interface StepRequestBody {
   preferredSpeaker?: string;
 }
 
+function isModelUnsupportedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('PROXY_GENERATION_DISABLED') ||
+    msg.includes('not found') ||
+    msg.includes('NOT_FOUND') ||
+    msg.includes('is not supported')
+  );
+}
+
 function extractGeminiError(err: unknown): { status: number; message: string } {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.includes('GEMINI_API_KEY tanımlı değil')) {
@@ -475,7 +541,14 @@ function extractGeminiError(err: unknown): { status: number; message: string } {
     return {
       status: 403,
       message:
-        'Gemini API anahtarı geçersiz veya yetkisiz. Lütfen Settings > Secrets panelinden anahtarınızı kontrol edin.',
+        'Gemini API anahtarı geçersiz veya yetkisiz. Lütfen Settings > Secrets veya Anlatıcı Ayarları üzerinden anahtarınızı kontrol edin.',
+    };
+  }
+  if (msg.includes('PROXY_GENERATION_DISABLED')) {
+    return {
+      status: 400,
+      message:
+        'Seçili model veya anahtar için Gemini isteği proxy tarafından desteklenmiyor. Ayarlardan farklı bir model (ör. Gemini 2.5 Flash) veya geçerli bir Gemini API anahtarı deneyin.',
     };
   }
   if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
@@ -506,6 +579,32 @@ async function generateWithRetry<T>(fn: () => Promise<T>): Promise<T> {
     }
     throw err;
   }
+}
+
+async function generateWithModelFallback<T>(
+  primaryModel: string,
+  thinkingMode: string | undefined,
+  runForModel: (model: string, thinking: ThinkingLevel | undefined) => Promise<T>
+): Promise<T> {
+  const candidates =
+    primaryModel === 'gemini-2.5-flash'
+      ? ['gemini-2.5-flash']
+      : [primaryModel, 'gemini-2.5-flash'];
+  let lastErr: unknown;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const activeModel = candidates[i];
+    const activeThinking = resolveThinkingLevel(activeModel, thinkingMode);
+    try {
+      return await generateWithRetry(() => runForModel(activeModel, activeThinking));
+    } catch (err) {
+      lastErr = err;
+      if (i < candidates.length - 1 && isModelUnsupportedError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
 }
 
 async function startServer() {
@@ -575,7 +674,9 @@ async function startServer() {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(502).json({ error: `Model listesi alınamadı: ${msg}` });
     }
-  });  app.post('/api/narrative/anythinkllm', async (req, res) => {
+  });
+
+  app.post('/api/narrative/anythinkllm', async (req, res) => {
     try {
       const body = (req.body ?? {}) as {
         baseUrl?: string;
@@ -607,19 +708,6 @@ async function startServer() {
           ? body.engineFacts.map((f, i) => `${i + 1}. ${f}`).join('\n')
           : 'Mekanik durum değişimi yok; saf atmosferik veya rol yapma sahnesi.';
 
-      const finalPrompt = [
-        `[DÜNYA BAĞLAMI]\n${body.contextSnapshotText ?? ''}`,
-        body.historyText ? `[SON SOHBET GEÇMİŞİ]\n${body.historyText}` : '',
-        `[EŞREF'İN SON EYLEMİ${body.playerActionText ? ` (${body.preferredRole ?? 'dialogue'})` : ''}]`,
-        body.playerActionText ?? '',
-        `[KESİN MOTOR SONUÇLARI]\n${factsBlock}`,
-        body.preferredSpeaker
-          ? `[KONUŞMA İPUCU]\nBu turda "${body.preferredSpeaker}" (${body.preferredRole ?? 'dialogue'}) doğrudan yanıt verdi; anlatımı veya diyaloğu bununla uyumlu kur.`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-
       const anythinkResponse = await fetch(anyThinkEndpointBase, {
         method: 'POST',
         headers: {
@@ -644,7 +732,9 @@ async function startServer() {
 
       if (!anythinkResponse.ok) {
         const anythinkErrText = await anythinkResponse.text();
-        res.status(502).json({ error: `AnyThinkLLM isteği başarısız oldu (HTTP ${anythinkResponse.status}): ${anythinkErrText}` });
+        res.status(502).json({
+          error: `AnyThinkLLM isteği başarısız oldu (HTTP ${anythinkResponse.status}): ${anythinkErrText}`,
+        });
         return;
       }
 
@@ -667,9 +757,17 @@ async function startServer() {
           parsedChoices.length > 0
             ? parsedChoices
             : [
-                { label: 'Çevreyi incele', actionPrompt: 'Çevreyi dikkatle inceliyorum.', kind: 'observe' },
+                {
+                  label: 'Çevreyi incele',
+                  actionPrompt: 'Çevreyi dikkatle inceliyorum.',
+                  kind: 'observe',
+                },
                 { label: 'Konuş', actionPrompt: 'Karşımdakiyle konuşuyorum.', kind: 'talk' },
-                { label: 'Yola devam et', actionPrompt: 'Yoluma devam ediyorum.', kind: 'travel' },
+                {
+                  label: 'Yola devam et',
+                  actionPrompt: 'Yoluma devam ediyorum.',
+                  kind: 'travel',
+                },
               ],
       };
       res.json({ status: 'final', narrative });
@@ -684,7 +782,6 @@ async function startServer() {
       const body = (req.body ?? {}) as StepRequestBody;
       const ai = getAiClient(body.apiKey);
       const selectedModel = resolveModelName(body.model);
-      const selectedThinking = resolveThinkingLevel(selectedModel, body.thinkingMode);
 
       if (body.mode !== 'finalize') {
         const contents = Array.isArray(body.turnContents) ? body.turnContents : [];
@@ -693,16 +790,19 @@ async function startServer() {
           return;
         }
 
-        const planResponse = await generateWithRetry(() =>
-          ai.models.generateContent({
-            model: selectedModel,
-            contents: contents as never,
-            config: {
-              systemInstruction: PLANNER_SYSTEM_INSTRUCTION,
-              tools: [{ functionDeclarations: ENGINE_TOOL_DECLARATIONS }],
-              ...(selectedThinking ? { thinkingConfig: { thinkingLevel: selectedThinking } } : {}),
-            },
-          })
+        const planResponse = await generateWithModelFallback(
+          selectedModel,
+          body.thinkingMode,
+          (modelName, thinking) =>
+            ai.models.generateContent({
+              model: modelName,
+              contents: contents as never,
+              config: {
+                systemInstruction: PLANNER_SYSTEM_INSTRUCTION,
+                tools: [{ functionDeclarations: ENGINE_TOOL_DECLARATIONS }],
+                ...(thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}),
+              },
+            })
         );
 
         const functionCalls = planResponse.functionCalls ?? [];
@@ -735,21 +835,24 @@ async function startServer() {
         .filter(Boolean)
         .join('\n\n');
 
-      const finalResponse = await generateWithRetry(() =>
-        ai.models.generateContent({
-          model: selectedModel,
-          contents: narratorPrompt,
-          config: {
-            systemInstruction: NARRATOR_SYSTEM_INSTRUCTION,
-            responseMimeType: 'application/json',
-            responseSchema: NARRATIVE_RESPONSE_SCHEMA,
-            ...(selectedThinking ? { thinkingConfig: { thinkingLevel: selectedThinking } } : {}),
-          },
-        })
+      const finalResponse = await generateWithModelFallback(
+        selectedModel,
+        body.thinkingMode,
+        (modelName, thinking) =>
+          ai.models.generateContent({
+            model: modelName,
+            contents: narratorPrompt,
+            config: {
+              systemInstruction: NARRATOR_SYSTEM_INSTRUCTION,
+              responseMimeType: 'application/json',
+              responseSchema: NARRATIVE_RESPONSE_SCHEMA,
+              ...(thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}),
+            },
+          })
       );
 
       const rawJson = (finalResponse.text ?? '').trim();
-      const parsed = JSON.parse(rawJson) as {
+      const parsed = (extractJsonObject(rawJson) ?? {}) as {
         speaker?: string;
         role?: 'narrator' | 'dialogue';
         text?: string;
@@ -763,9 +866,15 @@ async function startServer() {
       res.json({
         status: 'final',
         narrative: {
-          speaker: parsed.speaker || body.preferredSpeaker || 'Anlatıcı',
+          speaker:
+            (typeof parsed.speaker === 'string' && parsed.speaker.trim()) ||
+            body.preferredSpeaker ||
+            'Anlatıcı',
           role: parsed.role === 'dialogue' ? 'dialogue' : 'narrator',
-          text: parsed.text || factsBlock,
+          text:
+            (typeof parsed.text === 'string' && parsed.text.trim()) ||
+            readableNarrativeText(rawJson) ||
+            factsBlock,
           choices: Array.isArray(parsed.choices) ? parsed.choices.slice(0, 4) : [],
         },
       });

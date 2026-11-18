@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, Compass, Dices, MapPin, RotateCcw, Shield, X } from 'lucide-react';
+import { Clock, Compass, Dices, Eye, EyeOff, MapPin, RotateCcw, Shield, X } from 'lucide-react';
 import type { MazgalCell, MazgalNeighborSummary, ProtagonistState } from '../types/map';
 import { INITIAL_GAME_TIME_MS } from '../utils/gameTime';
 import { formatTravelHours } from '../utils/gridEngine';
@@ -14,6 +14,7 @@ interface MazgalInspectorProps {
   resetKey?: number;
   onSelectMazgal: (id: string) => void;
   onStepMazgal?: (fromId: string, nb: MazgalNeighborSummary) => void;
+  onToggleMazgalVisited?: (mazgalId: string) => void;
   onApplyMazgalEvent?: (cell: MazgalCell, ev: MazgalProceduralEvent) => void;
   onInteractRoamingUnit?: (
     unitId: string,
@@ -31,6 +32,7 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
   resetKey = 0,
   onSelectMazgal,
   onStepMazgal,
+  onToggleMazgalVisited,
   onApplyMazgalEvent,
   onInteractRoamingUnit,
   onSelectLocation,
@@ -103,9 +105,13 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
     setJourneyPath([cell.id]);
   };
 
-  const visibleLocationsInside = fogOfWar
-    ? cell.locationsInside.filter((l) => l.discovered)
-    : cell.locationsInside;
+  const isPlayerInCell = protagonist?.mazgalId === cell.id;
+  const isVisited =
+    isPlayerInCell ||
+    (protagonist?.visitedMazgalIds ?? [protagonist?.mazgalId ?? 'G4']).includes(cell.id);
+  const isFogged = fogOfWar && !isVisited;
+
+  const visibleLocationsInside = isFogged ? [] : cell.locationsInside;
 
   const safetyLabel =
     cell.safetyScore >= 75
@@ -123,7 +129,7 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
     >
       {/* Shared Terrain Illustration */}
       <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#0E1714]">
-        {!imgFailed ? (
+        {!imgFailed && !isFogged ? (
           <img
             src={cell.imageUrl}
             alt={`${cell.terrainLabel} arazi görünümü`}
@@ -134,7 +140,9 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-[#182822] via-[#101A16] to-[#0B1210] p-6 text-center">
             <Compass className="mb-2 h-8 w-8 text-[#D4A853]/85" />
-            <span className="font-display text-base text-[#EDE6D6]">{cell.terrainLabel}</span>
+            <span className="font-display text-base text-[#EDE6D6]">
+              {isFogged ? 'Keşfedilmemiş Bölge' : cell.terrainLabel}
+            </span>
           </div>
         )}
         <div
@@ -151,25 +159,58 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
         </button>
         <div className="absolute inset-x-0 bottom-0 p-4">
           <p className="font-mono text-xs font-medium text-[#D4A853] tabular-nums">
-            Mazgal {cell.id} · {cell.scaleFersah}×{cell.scaleFersah} Fersah · {cell.easternBeltLabel}
+            Mazgal {cell.id} · {cell.scaleFersah}×{cell.scaleFersah} Fersah ·{' '}
+            {isFogged ? 'Keşif Sisi Altında' : cell.easternBeltLabel}
           </p>
           <h2 className="mt-0.5 font-display text-xl font-semibold text-[#F8F3E6]">
-            {cell.terrainLabel}
+            {isFogged ? 'Bilinmeyen Arazi' : cell.terrainLabel}
           </h2>
         </div>
       </div>
 
       {/* Body */}
       <div className="flex flex-col gap-5 p-5">
-        {/* Zero-Pill Metadata Line */}
-        <div className="flex flex-wrap items-center gap-2 text-xs text-[#A3B1AA] tabular-nums">
-          <span className="inline-flex items-center gap-1 font-medium text-[#EDE6D6]">
-            <Shield className="h-3.5 w-3.5 text-[#D4A853]" />
-            Güvenlik {cell.safetyScore}/100 ({safetyLabel})
-          </span>
-          <span aria-hidden="true">·</span>
-          <span>Tehlike {cell.dangerLevel}/5</span>
+        {/* Zero-Pill Metadata Line + Exploration Status */}
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#A3B1AA] tabular-nums">
+          <div className="flex flex-wrap items-center gap-2">
+            {isFogged ? (
+              <span className="inline-flex items-center gap-1 font-medium text-[#9AA8A1]">
+                <EyeOff className="h-3.5 w-3.5 text-[#D4A853]" />
+                Sis Altında (Henüz Gidilmedi)
+              </span>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-1 font-medium text-[#EDE6D6]">
+                  <Shield className="h-3.5 w-3.5 text-[#D4A853]" />
+                  Güvenlik {cell.safetyScore}/100 ({safetyLabel})
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>Tehlike {cell.dangerLevel}/5</span>
+              </>
+            )}
+          </div>
+          {onToggleMazgalVisited && (!isPlayerInCell || !isVisited) && (
+            <button
+              type="button"
+              onClick={() => onToggleMazgalVisited(cell.id)}
+              className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
+                isVisited
+                  ? 'border-[#7E9087]/35 bg-[#101A16] text-[#A3B1AA] hover:text-[#EDE6D6]'
+                  : 'border-[#67C7C0]/45 bg-[#132520] text-[#9CE3DD] hover:bg-[#19322B]'
+              }`}
+            >
+              {isVisited ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+              {isVisited ? 'Sisle Kapat' : 'Mazgalı Aç'}
+            </button>
+          )}
         </div>
+
+        {isFogged ? (
+          <div className="border-t border-[#D4A853]/15 pt-4 text-sm leading-relaxed text-[#CFC8B9]">
+            Bu mazgala henüz adım atmadınız; buradaki arazi yapısı, gizli yerleşimler ve hareketli gruplar keşif sisi altında. Görmek için bu kareye doğru yürüyebilirsiniz.
+          </div>
+        ) : (
+          <>
 
         {/* Terrain Metrics */}
         <div className="grid grid-cols-2 gap-3 border-t border-[#D4A853]/15 pt-4 text-xs">
@@ -356,6 +397,8 @@ export const MazgalInspector: React.FC<MazgalInspectorProps> = ({
             ))}
           </ul>
         </div>
+          </>
+        )}
 
         {/* Neighbor Step Navigation with Travel Time */}
         <div className="border-t border-[#D4A853]/15 pt-4">

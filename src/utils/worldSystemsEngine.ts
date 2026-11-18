@@ -2080,56 +2080,154 @@ const WEATHER_LABELS: Record<WeatherConditionKey, string> = {
   storm: 'Sert Vadi Fırtınası',
 };
 
+export interface WeatherContextHint {
+  terrain?: MazgalCell['terrain'];
+  safetyScore?: number;
+  inSettlement?: boolean;
+}
+
+function pickWeightedWeather(weights: Record<WeatherConditionKey, number>): WeatherConditionKey {
+  const entries = Object.entries(weights) as Array<[WeatherConditionKey, number]>;
+  const total = entries.reduce((acc, [, w]) => acc + Math.max(0, w), 0);
+  if (total <= 0) return 'mist';
+  let roll = Math.random() * total;
+  for (const [key, w] of entries) {
+    roll -= Math.max(0, w);
+    if (roll <= 0) return key;
+  }
+  return 'mist';
+}
+
 export function advanceRegionalWeatherWithTime(
   currentWeather: WeatherConditionKey,
   activeWave: WorldWave | null | undefined,
   prevTimeMs: number,
-  nextTimeMs: number
+  nextTimeMs: number,
+  context?: WeatherContextHint
 ): { nextWeather: WeatherConditionKey; weatherNotice?: string } {
+  if (nextTimeMs <= prevTimeMs) {
+    return { nextWeather: currentWeather };
+  }
+
   const prevSlot = Math.floor((prevTimeMs - INITIAL_GAME_TIME_MS) / (12 * 60 * 60 * 1000));
   const nextSlot = Math.floor((nextTimeMs - INITIAL_GAME_TIME_MS) / (12 * 60 * 60 * 1000));
-  if (nextSlot <= prevSlot) {
+  const crossedSlot = nextSlot > prevSlot;
+  const hoursElapsed = Math.max(0, (nextTimeMs - prevTimeMs) / (60 * 60 * 1000));
+  const terrain = context?.terrain;
+  const highExposureTerrain =
+    terrain === 'mountain' ||
+    terrain === 'sea' ||
+    terrain === 'lake' ||
+    terrain === 'coast' ||
+    terrain === 'marsh';
+
+  if (!crossedSlot && hoursElapsed < 0.4) {
     return { nextWeather: currentWeather };
   }
 
   if (activeWave?.kind === 'Sis Fırtınası') {
-    const nextW: WeatherConditionKey =
-      currentWeather === 'storm' && Math.random() < 0.4 ? 'mist' : currentWeather === 'clear' ? 'mist' : currentWeather;
-    if (nextW !== currentWeather) {
-      return {
-        nextWeather: nextW,
-        weatherNotice: `Sis Fırtınası dalgası gökyüzünü kapladı (${WEATHER_LABELS[nextW]}).`,
-      };
+    const waveShiftProb = currentWeather === 'clear' ? 0.78 : crossedSlot ? 0.5 : 0.28;
+    if (Math.random() < waveShiftProb) {
+      const nextW: WeatherConditionKey =
+        currentWeather === 'storm' && Math.random() < 0.45
+          ? 'mist'
+          : currentWeather === 'mist' && Math.random() < 0.35
+          ? 'storm'
+          : 'mist';
+      if (nextW !== currentWeather) {
+        return {
+          nextWeather: nextW,
+          weatherNotice: `Sis Fırtınası dalgası gökyüzünü kapladı: ${WEATHER_LABELS[nextW]}.`,
+        };
+      }
     }
     return { nextWeather: currentWeather };
   }
 
-  // Only shift organically on ~40% of 12-hour boundaries
-  if (Math.random() > 0.42) {
+  let shiftChance = crossedSlot
+    ? 0.58
+    : hoursElapsed >= 6
+    ? 0.44
+    : hoursElapsed >= 2
+    ? 0.3
+    : hoursElapsed >= 1
+    ? 0.18
+    : 0.08;
+  if (highExposureTerrain) {
+    shiftChance = Math.min(0.82, shiftChance + 0.1);
+  }
+
+  if (Math.random() > shiftChance) {
     return { nextWeather: currentWeather };
   }
 
   const phase = getDayPhaseLabel(nextTimeMs);
-  const r = Math.random();
-  let nextW: WeatherConditionKey = currentWeather;
-  if (phase === 'Sabah' || phase === 'Gece') {
-    if (r < 0.22) nextW = 'clear';
-    else if (r < 0.72) nextW = 'mist';
-    else if (r < 0.90) nextW = 'rain';
-    else nextW = 'storm';
-  } else {
-    if (r < 0.36) nextW = 'clear';
-    else if (r < 0.72) nextW = 'mist';
-    else if (r < 0.90) nextW = 'rain';
-    else nextW = 'storm';
+  const weights: Record<WeatherConditionKey, number> = {
+    clear: phase === 'Öğle' ? 38 : phase === 'Sabah' || phase === 'Gece' ? 18 : 26,
+    mist: phase === 'Sabah' || phase === 'Gece' || phase === 'Akşam' ? 44 : 28,
+    rain: 22,
+    storm: 10,
+  };
+
+  if (terrain === 'mountain') {
+    weights.clear -= 10;
+    weights.mist += 8;
+    weights.rain += 6;
+    weights.storm += 14;
+  } else if (terrain === 'sea' || terrain === 'coast') {
+    weights.clear -= 6;
+    weights.mist += 10;
+    weights.rain += 8;
+    weights.storm += 10;
+  } else if (terrain === 'lake' || terrain === 'river' || terrain === 'marsh') {
+    weights.clear -= 8;
+    weights.mist += 18;
+    weights.rain += 8;
+  } else if (terrain === 'forest') {
+    weights.clear -= 6;
+    weights.mist += 14;
+    weights.rain += 6;
+  } else if (terrain === 'plain' || terrain === 'road') {
+    weights.clear += 12;
+    weights.mist -= 6;
+    weights.storm -= 4;
   }
 
+  if (typeof context?.safetyScore === 'number' && context.safetyScore <= 38) {
+    weights.clear -= 6;
+    weights.mist += 8;
+    weights.storm += 6;
+  }
+
+  if (activeWave?.kind === 'Eşkıya İttifakı' || activeWave?.kind === 'Goblin Akını') {
+    weights.clear -= 8;
+    weights.rain += 8;
+    weights.storm += 6;
+  } else if (activeWave?.kind === 'Ticaret Şenliği') {
+    weights.clear += 10;
+    weights.storm -= 4;
+  }
+
+  // Slight inertia so weather doesn't jump unnaturally back and forth
+  weights[currentWeather] = Math.max(4, Math.round(weights[currentWeather] * 0.45));
+
+  const nextW = pickWeightedWeather(weights);
   if (nextW === currentWeather) {
     return { nextWeather: currentWeather };
   }
+
+  const reasonPrefix =
+    terrain === 'mountain' && nextW === 'storm'
+      ? 'Yüksek geçitlerde rüzgar sertleşti'
+      : (terrain === 'forest' || terrain === 'marsh' || terrain === 'lake') && nextW === 'mist'
+      ? 'Nemli zemin ve su kıyısı sis topladı'
+      : nextW === 'clear'
+      ? 'Bulutlar aralandı'
+      : 'Hava duruma göre değişti';
+
   return {
     nextWeather: nextW,
-    weatherNotice: `Hava değişti: ${WEATHER_LABELS[nextW]}.`,
+    weatherNotice: `${reasonPrefix}: ${WEATHER_LABELS[nextW]}.`,
   };
 }
 
