@@ -1131,6 +1131,59 @@ export async function runAiNarrativeTurn(params: {
   for (let round = 0; round < 3; round += 1) {
     const mode =
       round === 0 || (round === 1 && needsChainedPlan) ? 'plan' : 'finalize';
+
+    if (aiSettings?.provider === 'anythinkllm') {
+      const anyThinkMessages = (
+        turnContents as Array<{ role?: string; parts?: Array<Record<string, unknown>> }>
+      )
+        .map((c) => ({
+          role: c.role === 'model' ? 'assistant' : 'user',
+          content: (c.parts ?? [])
+            .map((p) => (p && typeof p === 'object' && 'text' in p ? String(p.text ?? '') : ''))
+            .filter(Boolean)
+            .join('\n'),
+        }))
+        .filter((m) => m.content);
+      const anyThinkRes = await fetch('/api/narrative/anythinkllm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: aiSettings.anythinkllmBaseUrl,
+          apiKey: aiSettings.anythinkllmApiKey,
+          model: aiSettings.anythinkllmModel,
+          messages: anyThinkMessages,
+          contextSnapshotText: buildAiContextSnapshot(workingState),
+          historyText,
+          engineFacts: workingState.engineFacts,
+          playerActionText: trimmed,
+          preferredSpeaker: workingState.preferredSpeaker,
+          preferredRole: workingState.preferredRole,
+        }),
+      });
+      const anyThinkRaw = await anyThinkRes.text();
+      const anyThinkData = JSON.parse(anyThinkRaw) as {
+        error?: string;
+        narrative?: {
+          speaker?: string;
+          role?: string;
+          text?: string;
+          choices?: Array<Record<string, unknown>>;
+        };
+      };
+      if (!anyThinkRes.ok) {
+        throw new Error(anyThinkData.error || 'Sunucu hatası (' + anyThinkRes.status + ')');
+      }
+      finalPayload = {
+        speaker: anyThinkData.narrative?.speaker || workingState.preferredSpeaker || 'Anlatıcı',
+        role: anyThinkData.narrative?.role === 'dialogue' ? 'dialogue' : 'narrator',
+        text: anyThinkData.narrative?.text || 'Anlatıcı şu an konuşuyor.',
+        choices: Array.isArray(anyThinkData.narrative?.choices)
+          ? (anyThinkData.narrative?.choices as Array<{ label: string; actionPrompt: string; kind: NarrativeChoiceKind }>).slice(0, 4)
+          : [],
+      };
+      break;
+    }
+
     const res = await fetch('/api/narrative/step', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1138,6 +1191,7 @@ export async function runAiNarrativeTurn(params: {
         mode,
         model: aiSettings?.model,
         thinkingMode: aiSettings?.thinkingMode,
+        apiKey: aiSettings?.apiKey,
         turnContents,
         playerActionText: trimmed,
         chosenOptionKind: chosenOption?.kind,

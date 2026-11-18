@@ -466,11 +466,32 @@ export type NarrativeAiModelId =
   | 'gemini-4-hydrogen'
   | 'gemini-3.1-flash-lite'
   | 'gemini-4-argon'
-  | 'gemini-4-carbon';
+  | 'gemini-4-carbon'
+  | 'gemini-2.5-pro'
+  | 'gemini-2.5-flash'
+  | 'gemini-2.0-flash'
+  | 'gemini-2.5-flash-lite'
+  | 'gemini-2.5-thinking'
+  | 'gemini-1.5-pro'
+  | 'gemini-1.5-flash'
+  | 'gemini-1.5-flash-8b'
+  | 'gemini-2.0-flash-lite'
+  | 'gemini-3-pro'
+  | 'gemini-3-flash'
+  | 'gemini-3-flash-lite'
+  | 'gemini-3.7-flash'
+  | 'gemini-3.7-flash-lite'
+  | 'gemini-3.8-flash'
+  | 'gemini-3.8-flash-lite';
 
 export type NarrativeThinkingMode = 'fast' | 'balanced' | 'deep';
 
 export interface NarrativeAiSettings {
   model: NarrativeAiModelId;
   thinkingMode: NarrativeThinkingMode;
+  apiKey?: string;
+  provider?: 'gemini' | 'anythinkllm';
+  anythinkllmBaseUrl?: string;
+  anythinkllmApiKey?: string;
+  anythinkllmModel?: string;
 }

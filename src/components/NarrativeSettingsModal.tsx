@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Cpu, SlidersHorizontal, X } from 'lucide-react';
 import type {
   NarrativeAiModelId,
@@ -43,6 +43,102 @@ export const NARRATIVE_MODEL_OPTIONS: Array<{
     subtitle: 'En derin akıl yürütme, ince ipuçları ve çok katmanlı sahne dokusu.',
     tierLabel: 'Maksimum Derinlik',
   },
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    subtitle: 'Güçlü kurgu ve uzun süreli anlatı akışları için olgun model.',
+    tierLabel: 'Güçlü · Eski',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    subtitle: 'Hızlı ve ekonomik akış; hızlı temiz anlatımlar.',
+    tierLabel: 'Hızlı · Eski',
+  },
+  {
+    id: 'gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash',
+    subtitle: 'Çok hızlı, düşük maliyetli eski nesil model.',
+    tierLabel: 'Çok Hızlı · Eski',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash-Lite',
+    subtitle: 'Çok hızlı ve ekonomik akıllı anlatım modeli.',
+    tierLabel: 'Çok Hızlı · Ekonomik',
+  },
+  {
+    id: 'gemini-2.5-thinking',
+    name: 'Gemini 2.5 Thinking',
+    subtitle: 'Derin muhakeme ve kurgu odaklı düşünce modeli.',
+    tierLabel: 'Düşünce · Eski',
+  },
+  {
+    id: 'gemini-1.5-pro',
+    name: 'Gemini 1.5 Pro',
+    subtitle: 'Uzun bağlamlı kurgu ve diyalog modelleri.',
+    tierLabel: 'Güçlü · Çok Eski',
+  },
+  {
+    id: 'gemini-1.5-flash',
+    name: 'Gemini 1.5 Flash',
+    subtitle: 'Hızlı ve ucuz akıllı anlatım modeli.',
+    tierLabel: 'Hızlı · Çok Eski',
+  },
+  {
+    id: 'gemini-1.5-flash-8b',
+    name: 'Gemini 1.5 Flash-8B',
+    subtitle: 'Çok hızlı, düşük maliyetli konuşma modeli.',
+    tierLabel: 'Çok Hızlı · Çok Eski',
+  },
+  {
+    id: 'gemini-2.0-flash-lite',
+    name: 'Gemini 2.0 Flash-Lite',
+    subtitle: 'Çok hızlı ve ekonomik eski nesil model.',
+    tierLabel: 'Çok Hızlı · Eski',
+  },
+  {
+    id: 'gemini-3-pro',
+    name: 'Gemini 3 Pro',
+    subtitle: 'Güçlü kurgu ve derin anlatım için gelişmiş model.',
+    tierLabel: 'Güçlü · Yeni',
+  },
+  {
+    id: 'gemini-3-flash',
+    name: 'Gemini 3 Flash',
+    subtitle: 'Hızlı ve akıcı anlatım için hafif model.',
+    tierLabel: 'Hızlı · Yeni',
+  },
+  {
+    id: 'gemini-3-flash-lite',
+    name: 'Gemini 3 Flash-Lite',
+    subtitle: 'Çok hızlı ve ekonomik akıllı anlatım modeli.',
+    tierLabel: 'Çok Hızlı · Yeni',
+  },
+  {
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    subtitle: 'Gelişmiş hızlı anlatım modeli.',
+    tierLabel: 'Hızlı · 3.7',
+  },
+  {
+    id: 'gemini-3.7-flash-lite',
+    name: 'Gemini 3.7 Flash-Lite',
+    subtitle: 'Çok hızlı ve ekonomik 3.7 serisi modeli.',
+    tierLabel: 'Çok Hızlı · 3.7',
+  },
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    subtitle: 'Yeni nesil hızlı anlatım modeli.',
+    tierLabel: 'Hızlı · 3.8',
+  },
+  {
+    id: 'gemini-3.8-flash-lite',
+    name: 'Gemini 3.8 Flash-Lite',
+    subtitle: 'Çok hızlı ve ekonomik 3.8 serisi modeli.',
+    tierLabel: 'Çok Hızlı · 3.8',
+  },
 ];
 
 const THINKING_OPTIONS: Array<{
@@ -61,6 +157,58 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
   onChange,
   onClose,
 }) => {
+  const [anyThinkModels, setAnyThinkModels] = useState<Array<{ id: string; name?: string }>>([]);
+  const [anyThinkStatus, setAnyThinkStatus] = useState('');
+  const [anyThinkReloadKey, setAnyThinkReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (settings.provider !== 'anythinkllm') {
+      setAnyThinkModels([]);
+      setAnyThinkStatus('');
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      setAnyThinkStatus('Modeller yükleniyor...');
+      try {
+        const res = await fetch('/api/narrative/anythinkllm/models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseUrl: settings.anythinkllmBaseUrl ?? '',
+            apiKey: settings.anythinkllmApiKey ?? '',
+          }),
+        });
+        const data = (await res.json()) as { models?: Array<{ id: string; name?: string }>; error?: string };
+        if (cancelled) return;
+        if (!res.ok) {
+          setAnyThinkModels([]);
+          setAnyThinkStatus(data.error || 'Model listesi alınamadı (HTTP ' + res.status + ').');
+          return;
+        }
+        const list = (data.models ?? []).filter((model) => model && model.id);
+        setAnyThinkModels(list);
+        setAnyThinkStatus(
+          list.length > 0
+            ? list.length + ' model bulundu.'
+            : 'Model bulunamadı; model adını elle yazabilirsiniz.',
+        );
+        if (list.length > 0 && !list.some((model) => model.id === settings.anythinkllmModel)) {
+          onChange({ ...settings, anythinkllmModel: list[0].id });
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setAnyThinkModels([]);
+        setAnyThinkStatus(err instanceof Error ? 'Bağlantı hatası: ' + err.message : 'Bağlantı hatası.');
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, settings.provider, settings.anythinkllmBaseUrl, settings.anythinkllmApiKey, anyThinkReloadKey]);
+
   if (!isOpen) return null;
 
   return (
@@ -98,38 +246,115 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
 
         {/* Body */}
         <div className="max-h-[75vh] space-y-5 overflow-y-auto p-5">
+          {/* AI Provider Selection */}
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-[#EDE6D6]">Yapay Zeka Sağlayıcı</h3>
+            <select
+              value={settings.provider ?? 'gemini'}
+              onChange={(e) => onChange({ ...settings, provider: e.target.value as 'gemini' | 'anythinkllm' })}
+              className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors focus:border-[#D4A853]/60"
+            >
+              <option value="gemini">Google Gemini</option>
+              <option value="anythinkllm">AnyThinkLLM</option>
+            </select>
+            {settings.provider === 'anythinkllm' && (
+              <div className="mt-3 space-y-2.5">
+                <div>
+                  <label htmlFor="anythinkllm-base-url" className="mb-1 block text-[11px] font-medium text-[#A3B1AA]">AnyThinkLLM API URL</label>
+                  <input
+                    id="anythinkllm-base-url"
+                    type="text"
+                    value={settings.anythinkllmBaseUrl ?? ''}
+                    onChange={(e) => onChange({ ...settings, anythinkllmBaseUrl: e.target.value })}
+                    placeholder="http://localhost:3001/api/v1/openai"
+                    className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="anythinkllm-api-key" className="mb-1 block text-[11px] font-medium text-[#A3B1AA]">AnyThinkLLM API Anahtarı</label>
+                  <input
+                    id="anythinkllm-api-key"
+                    type="password"
+                    value={settings.anythinkllmApiKey ?? ''}
+                    onChange={(e) => onChange({ ...settings, anythinkllmApiKey: e.target.value })}
+                    placeholder="AnyThinkLLM API anahtarı"
+                    autoComplete="off"
+                    className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
+                  />
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label htmlFor="anythinkllm-model" className="text-[11px] font-medium text-[#A3B1AA]">Model</label>
+                    <button
+                      type="button"
+                      onClick={() => setAnyThinkReloadKey((key) => key + 1)}
+                      className="cursor-pointer text-[10px] font-medium text-[#D4A853] underline-offset-2 hover:underline"
+                    >
+                      Modelleri Yenile
+                    </button>
+                  </div>
+                  {anyThinkModels.length > 0 ? (
+                    <select
+                      id="anythinkllm-model"
+                      value={settings.anythinkllmModel ?? ''}
+                      onChange={(e) => onChange({ ...settings, anythinkllmModel: e.target.value })}
+                      className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors focus:border-[#D4A853]/60"
+                    >
+                      {anyThinkModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name || model.id}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="anythinkllm-model"
+                      type="text"
+                      value={settings.anythinkllmModel ?? ''}
+                      onChange={(e) => onChange({ ...settings, anythinkllmModel: e.target.value })}
+                      placeholder="Model adı (örn. gpt-4o)"
+                      className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
+                    />
+                  )}
+                  <p className="mt-1 text-[10px] leading-snug text-[#8E9C95]">{anyThinkStatus}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Gemini API Key */}
+          <div>
+            <h3 className="mb-2 text-sm font-medium text-[#EDE6D6]">Gemini API Anahtarı</h3>
+            <input
+              type="password"
+              value={settings.apiKey ?? ''}
+              onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
+              placeholder="AI anlatıcı API anahtarı"
+              autoComplete="off"
+              className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 font-mono text-xs text-[#EDE6D6] outline-none transition-colors placeholder:text-[#6B7A72] focus:border-[#D4A853]/60"
+            />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[#8E9C95]">
+              Anahtar kaydedildikten sonra ekranda **** ile maskelenir, düz metin olarak görünmez.
+            </p>
+          </div>
+
           {/* Model Selection */}
           <div>
             <div className="mb-2.5 flex items-center gap-2">
               <Cpu className="h-4 w-4 text-[#D4A853]" />
               <h3 className="text-sm font-medium text-[#EDE6D6]">Yapay Zeka Modeli</h3>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {NARRATIVE_MODEL_OPTIONS.map((opt) => {
-                const selected = settings.model === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => onChange({ ...settings, model: opt.id })}
-                    className={`flex flex-col items-start rounded-lg border p-3 text-left transition-colors cursor-pointer ${
-                      selected
-                        ? 'border-[#D4A853]/75 bg-[#1B2B24]'
-                        : 'border-[#D4A853]/18 bg-[#141F1B] hover:border-[#D4A853]/45 hover:bg-[#182520]'
-                    }`}
-                  >
-                    <div className="flex w-full items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-[#F3EBD8]">{opt.name}</span>
-                      {selected && <Check className="h-4 w-4 shrink-0 text-[#D4A853]" />}
-                    </div>
-                    <span className="mt-0.5 text-[11px] font-medium text-[#D4A853]/90">
-                      {opt.tierLabel}
-                    </span>
-                    <p className="mt-1.5 text-xs leading-relaxed text-[#A3B1AA]">{opt.subtitle}</p>
-                  </button>
-                );
-              })}
-            </div>
+            <select
+              value={settings.model}
+              onChange={(e) => onChange({ ...settings, model: e.target.value as NarrativeAiModelId })}
+              className="w-full rounded-lg border border-[#D4A853]/25 bg-[#0E1712] px-3 py-2 text-xs text-[#EDE6D6] outline-none transition-colors focus:border-[#D4A853]/60"
+            >
+              {NARRATIVE_MODEL_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.name} — {opt.tierLabel}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Thinking / Depth Selection */}
@@ -156,6 +381,7 @@ export const NarrativeSettingsModal: React.FC<NarrativeSettingsModalProps> = ({
               })}
             </div>
           </div>
+
         </div>
 
         {/* Footer */}

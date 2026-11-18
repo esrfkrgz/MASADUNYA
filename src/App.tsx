@@ -137,6 +137,11 @@ interface PersistedState {
 const DEFAULT_AI_SETTINGS: NarrativeAiSettings = {
   model: 'gemini-4-hydrogen',
   thinkingMode: 'fast',
+  apiKey: '',
+  provider: 'gemini',
+  anythinkllmBaseUrl: 'http://localhost:3001/api/v1/openai',
+  anythinkllmApiKey: '',
+  anythinkllmModel: 'gpt-4o',
 };
 
 function loadInitialState(): PersistedState {

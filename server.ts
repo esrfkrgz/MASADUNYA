@@ -15,12 +15,155 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const DEFAULT_MODEL_NAME = 'gemini-4-hydrogen';
+const ANYTHINKLLM_BASE_URL = process.env.ANYTHINKLLM_BASE_URL || 'http://localhost:3001/api/v1/openai';
+const ANYTHINKLLM_API_KEY = process.env.ANYTHINKLLM_API_KEY || '';
+const ANYTHINKLLM_MODEL = process.env.ANYTHINKLLM_MODEL || 'gpt-4o';
+
+function normalizeAnyThinkBaseUrl(baseUrl: string): string {
+  let base = (baseUrl || '').trim().replace(/\/+$/, '');
+  for (const suffix of ['/chat/completions', '/models']) {
+    if (base.endsWith(suffix)) {
+      base = base.slice(0, base.length - suffix.length);
+      break;
+    }
+  }
+  return base;
+}
+
+function anyThinkUrl(baseUrl: string, resource: 'chat/completions' | 'models'): string {
+  const base = normalizeAnyThinkBaseUrl(baseUrl);
+  if (base.endsWith('/v1') || base.includes('/api/')) {
+    return `${base}/${resource}`;
+  }
+  return `${base}/v1/${resource}`;
+}
+
+function stripReasoningText(raw: string): string {
+  return raw
+    .replace(/<think(?:ing)?[\s\S]*?<\/think(?:ing)?>/gi, '')
+    .replace(/<think(?:ing)?[\s\S]*$/gi, '')
+    .replace(/<\/think(?:ing)?>/gi, '')
+    .trim();
+}
+
+function coerceNarrativeChoice(raw: unknown): { label: string; actionPrompt: string; kind: string } {
+  const record = (raw ?? {}) as Record<string, unknown>;
+  const label =
+    typeof record.label === 'string'
+      ? record.label.trim()
+      : typeof record.text === 'string'
+        ? record.text.trim()
+        : typeof record.title === 'string'
+          ? record.title.trim()
+          : '';
+  const actionCandidate =
+    typeof record.actionPrompt === 'string'
+      ? record.actionPrompt.trim()
+      : typeof record.prompt === 'string'
+        ? record.prompt.trim()
+        : typeof record.action === 'string' && record.action.includes(' ')
+          ? record.action.trim()
+          : '';
+  const actionPrompt = actionCandidate || label;
+  const kind = typeof record.kind === 'string' ? record.kind : 'observe';
+  return { label, actionPrompt, kind };
+}
+
+function pickNarrativeFields(parsed: Record<string, unknown> | null): {
+  speaker: string;
+  role: 'narrator' | 'dialogue';
+  text: string;
+  choices: unknown[];
+} {
+  if (!parsed) return { speaker: '', role: 'narrator', text: '', choices: [] };
+  const nested =
+    parsed.narrative && typeof parsed.narrative === 'object' && !Array.isArray(parsed.narrative)
+      ? (parsed.narrative as Record<string, unknown>)
+      : parsed;
+  const speaker = typeof nested.speaker === 'string' ? nested.speaker.trim() : '';
+  const role: 'narrator' | 'dialogue' = nested.role === 'dialogue' ? 'dialogue' : 'narrator';
+  const textParts = [
+    typeof nested.text === 'string' ? nested.text.trim() : '',
+    typeof nested.details === 'string' ? nested.details.trim() : '',
+    typeof nested.description === 'string' ? nested.description.trim() : '',
+  ].filter(Boolean);
+  const choices = Array.isArray(nested.choices)
+    ? nested.choices
+    : Array.isArray(parsed.choices)
+      ? parsed.choices
+      : [];
+  return { speaker, role, text: textParts.join('\n\n'), choices };
+}
+
+function readableNarrativeText(raw: string): string {
+  return stripReasoningText(raw)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s*\{[\s\S]*\}\s*$/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}function extractJsonObject(raw: string): Record<string, unknown> | null {
+  if (!raw) return null;
+  let text = stripReasoningText(raw).replace(/```json/gi, '```');
+  const fenced = text.match(/```([\s\S]*?)```/);
+  if (fenced) text = fenced[1];
+  try {
+    const direct = JSON.parse(text) as unknown;
+    if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+      return direct as Record<string, unknown>;
+    }
+  } catch {
+    // govde duz JSON degil; asagida suslu parantez taramasi yapilir
+  }
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
 
 const ALLOWED_MODELS = new Set([
   'gemini-4-hydrogen',
   'gemini-3.1-flash-lite',
   'gemini-4-argon',
   'gemini-4-carbon',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-thinking',
+  'gemini-1.5-pro',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-8b',
+  'gemini-2.0-flash-lite',
+  'gemini-3-pro',
+  'gemini-3-flash',
+  'gemini-3-flash-lite',
+  'gemini-3.7-flash',
+  'gemini-3.7-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-3.8-flash-lite',
 ]);
 
 function resolveModelName(requested?: string): string {
@@ -30,19 +173,22 @@ function resolveModelName(requested?: string): string {
   return DEFAULT_MODEL_NAME;
 }
 
-function resolveThinkingLevel(model: string, mode?: string): ThinkingLevel {
+function resolveThinkingLevel(model: string, mode?: string): ThinkingLevel | undefined {
   if (model === 'gemini-3.1-flash-lite') {
     if (mode === 'deep') return ThinkingLevel.MEDIUM;
     if (mode === 'balanced') return ThinkingLevel.LOW;
     return ThinkingLevel.MINIMAL;
   }
-  if (mode === 'deep') return ThinkingLevel.HIGH;
-  if (mode === 'balanced') return ThinkingLevel.MEDIUM;
-  return ThinkingLevel.LOW;
+  if (model.startsWith('gemini-3') || model.startsWith('gemini-4')) {
+    if (mode === 'deep') return ThinkingLevel.HIGH;
+    if (mode === 'balanced') return ThinkingLevel.MEDIUM;
+    return ThinkingLevel.LOW;
+  }
+  return undefined;
 }
 
-function getAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+function getAiClient(requestedApiKey?: string): GoogleGenAI {
+  const apiKey = requestedApiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
       'GEMINI_API_KEY tanımlı değil. Lütfen AI Studio Settings > Secrets panelinden API anahtarınızı ekleyin.'
@@ -306,6 +452,7 @@ const NARRATIVE_RESPONSE_SCHEMA = {
 };
 
 interface StepRequestBody {
+  apiKey?: string;
   mode?: 'plan' | 'finalize';
   model?: string;
   thinkingMode?: string;
@@ -365,10 +512,177 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
+  app.post('/api/narrative/anythinkllm/models', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { baseUrl?: string; apiKey?: string };
+      const baseUrl = body.baseUrl || ANYTHINKLLM_BASE_URL;
+      const apiKey = body.apiKey || ANYTHINKLLM_API_KEY;
+      const url = anyThinkUrl(baseUrl, 'models');
+
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+      });
+      const text = await response.text();
+
+      if (!response.ok) {
+        res.status(502).json({
+          error: `Model listesi alınamadı (HTTP ${response.status}). Adres: ${url}. Yanıt: ${text.slice(0, 400)}`,
+        });
+        return;
+      }
+
+      let data: unknown = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        res.status(502).json({
+          error: `Model listesi JSON değil. Adres: ${url}. Yanıt: ${text.slice(0, 400)}`,
+        });
+        return;
+      }
+
+      const container = data as { data?: unknown; models?: unknown };
+      const list: unknown[] = Array.isArray(container?.data)
+        ? (container.data as unknown[])
+        : Array.isArray(container?.models)
+          ? (container.models as unknown[])
+          : Array.isArray(data)
+            ? (data as unknown[])
+            : [];
+
+      const models = list
+        .map((item) => {
+          if (typeof item === 'string') return { id: item, name: item };
+          const record = (item ?? {}) as Record<string, unknown>;
+          const id =
+            typeof record.id === 'string'
+              ? record.id
+              : typeof record.slug === 'string'
+                ? record.slug
+                : typeof record.model === 'string'
+                  ? record.model
+                  : '';
+          const name = typeof record.name === 'string' ? record.name : id;
+          return { id, name: name || id };
+        })
+        .filter((item) => item.id);
+
+      res.json({ models, endpoint: url });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(502).json({ error: `Model listesi alınamadı: ${msg}` });
+    }
+  });  app.post('/api/narrative/anythinkllm', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        baseUrl?: string;
+        apiKey?: string;
+        model?: string;
+        messages?: Array<{ role: string; content: string }>;
+        contextSnapshotText?: string;
+        historyText?: string;
+        engineFacts?: string[];
+        playerActionText?: string;
+        preferredSpeaker?: string;
+        preferredRole?: 'narrator' | 'dialogue';
+      };
+
+      const baseUrl = (body.baseUrl || ANYTHINKLLM_BASE_URL).trim().replace(/\/+$/, '');
+      const apiKey = body.apiKey || ANYTHINKLLM_API_KEY;
+      const model = body.model || ANYTHINKLLM_MODEL;
+      const anyThinkEndpointBase = anyThinkUrl(baseUrl, 'chat/completions');
+      const messages = Array.isArray(body.messages)
+        ? body.messages.filter((m) => m && typeof m.content === 'string')
+        : [];
+      if (messages.length === 0) {
+        res.status(400).json({ error: 'Geçersiz mesaj listesi.' });
+        return;
+      }
+
+      const factsBlock =
+        Array.isArray(body.engineFacts) && body.engineFacts.length > 0
+          ? body.engineFacts.map((f, i) => `${i + 1}. ${f}`).join('\n')
+          : 'Mekanik durum değişimi yok; saf atmosferik veya rol yapma sahnesi.';
+
+      const finalPrompt = [
+        `[DÜNYA BAĞLAMI]\n${body.contextSnapshotText ?? ''}`,
+        body.historyText ? `[SON SOHBET GEÇMİŞİ]\n${body.historyText}` : '',
+        `[EŞREF'İN SON EYLEMİ${body.playerActionText ? ` (${body.preferredRole ?? 'dialogue'})` : ''}]`,
+        body.playerActionText ?? '',
+        `[KESİN MOTOR SONUÇLARI]\n${factsBlock}`,
+        body.preferredSpeaker
+          ? `[KONUŞMA İPUCU]\nBu turda "${body.preferredSpeaker}" (${body.preferredRole ?? 'dialogue'}) doğrudan yanıt verdi; anlatımı veya diyaloğu bununla uyumlu kur.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      const anythinkResponse = await fetch(anyThinkEndpointBase, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content:
+                NARRATOR_SYSTEM_INSTRUCTION +
+                '\nYanıtını SADECE JSON olarak ver. Kod bloğu, üçlü ters tırnak veya açıklama ekleme. Şema: {"speaker":"...","role":"narrator veya dialogue","text":"...","choices":[{"label":"...","actionPrompt":"...","kind":"observe|talk|action|risk|travel|rest"}]}',
+            },
+            ...messages,
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' },
+        }),
+      });
+
+      if (!anythinkResponse.ok) {
+        const anythinkErrText = await anythinkResponse.text();
+        res.status(502).json({ error: `AnyThinkLLM isteği başarısız oldu (HTTP ${anythinkResponse.status}): ${anythinkErrText}` });
+        return;
+      }
+
+      const anythinkData = (await anythinkResponse.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const rawContent = anythinkData.choices?.[0]?.message?.content ?? '';
+      const parsed = extractJsonObject(rawContent);
+      const picked = pickNarrativeFields(parsed);
+      const parsedChoices = picked.choices
+        .map(coerceNarrativeChoice)
+        .filter((choice) => choice.label.length > 0 && choice.actionPrompt.length > 0)
+        .slice(0, 4);
+
+      const narrative = {
+        speaker: picked.speaker || body.preferredSpeaker || 'Anlatıcı',
+        role: picked.role,
+        text: picked.text || readableNarrativeText(rawContent) || factsBlock,
+        choices:
+          parsedChoices.length > 0
+            ? parsedChoices
+            : [
+                { label: 'Çevreyi incele', actionPrompt: 'Çevreyi dikkatle inceliyorum.', kind: 'observe' },
+                { label: 'Konuş', actionPrompt: 'Karşımdakiyle konuşuyorum.', kind: 'talk' },
+                { label: 'Yola devam et', actionPrompt: 'Yoluma devam ediyorum.', kind: 'travel' },
+              ],
+      };
+      res.json({ status: 'final', narrative });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(502).json({ error: `AnyThinkLLM ile iletişim hatası: ${msg}` });
+    }
+  });
+
   app.post('/api/narrative/step', async (req, res) => {
     try {
       const body = (req.body ?? {}) as StepRequestBody;
-      const ai = getAiClient();
+      const ai = getAiClient(body.apiKey);
       const selectedModel = resolveModelName(body.model);
       const selectedThinking = resolveThinkingLevel(selectedModel, body.thinkingMode);
 
@@ -386,7 +700,7 @@ async function startServer() {
             config: {
               systemInstruction: PLANNER_SYSTEM_INSTRUCTION,
               tools: [{ functionDeclarations: ENGINE_TOOL_DECLARATIONS }],
-              thinkingConfig: { thinkingLevel: selectedThinking },
+              ...(selectedThinking ? { thinkingConfig: { thinkingLevel: selectedThinking } } : {}),
             },
           })
         );
@@ -429,7 +743,7 @@ async function startServer() {
             systemInstruction: NARRATOR_SYSTEM_INSTRUCTION,
             responseMimeType: 'application/json',
             responseSchema: NARRATIVE_RESPONSE_SCHEMA,
-            thinkingConfig: { thinkingLevel: selectedThinking },
+            ...(selectedThinking ? { thinkingConfig: { thinkingLevel: selectedThinking } } : {}),
           },
         })
       );
