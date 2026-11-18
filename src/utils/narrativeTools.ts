@@ -57,6 +57,15 @@ import {
   useInventoryItem,
 } from './worldSystemsEngine';
 
+import {
+  buildFocusedSceneCard,
+  buildPlannerContextBrief,
+  detectScenePosture,
+  maskUndiscoveredNames,
+  sanitizeNarrativeOutput,
+  type SceneActionRecord,
+} from './sceneDirector';
+
 export interface NarrativeWorkingState {
   protagonist: ProtagonistState;
   locations: MapLocation[];
@@ -67,6 +76,9 @@ export interface NarrativeWorkingState {
   partyLocationId: string;
   journeyEntries: JourneyLogEntry[];
   engineFacts: string[];
+  actionRecords: SceneActionRecord[];
+  recentMessages?: NarrativeMessage[];
+  playerActionText?: string;
   hoursSpentTotal: number;
   lastTimeAction?: string;
   preferredRole?: 'narrator' | 'dialogue';
@@ -143,63 +155,12 @@ function describeUnitSensory(
     : `${label} (kimliği ve geldiği yer Eşref tarafından henüz bilinmiyor — yalnızca dış görünüş ve silahlarıyla anlat)`;
 }
 
-const DISTINCTIVE_PROPER_TOKENS = [
-  'Paslıçukur',
-  'Çakmaktaşı',
-  'Batakhan',
-  'Külköy',
-  'Kulova',
-  'Derebaşı',
-  'Yüksekçam',
-  'Bozpençe',
-  'Taşburun',
-  'Kızılşahin',
-  'Söğütlü',
-  'Gümüş Köprü',
-  'Yosunlu Koyak',
-  'Ayna Gölü',
-  'Doğu Falezleri',
-];
-
 function maskUndiscoveredLocationNames(
   text: string,
   locations: MapLocation[],
   currentLocation?: MapLocation
 ): string {
-  let masked = text;
-  const knownText = locations
-    .filter((l) => l.discovered || l.id === currentLocation?.id)
-    .map((l) => l.name)
-    .join(' ');
-
-  for (const loc of locations) {
-    if (loc.discovered || loc.id === currentLocation?.id) continue;
-    const escaped = loc.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const replacement =
-      loc.category === 'burrow'
-        ? 'gizli bir yeraltı ini'
-        : loc.category === 'village'
-        ? 'uzaktaki bilinmeyen bir yerleşim'
-        : 'keşfedilmemiş bir bölge';
-    masked = masked.replace(new RegExp(escaped, 'gi'), replacement);
-  }
-
-  for (const token of DISTINCTIVE_PROPER_TOKENS) {
-    if (knownText.toLowerCase().includes(token.toLowerCase())) continue;
-    const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    masked = masked.replace(new RegExp(escapedToken, 'gi'), 'bilinmeyen');
-  }
-
-  const anyBurrowDiscovered = locations.some(
-    (l) => l.category === 'burrow' && (l.discovered || l.id === currentLocation?.id)
-  );
-  if (!anyBurrowDiscovered) {
-    masked = masked.replace(
-      /\b(goblin|kobold)\s+(ini|inleri|kamp[ıi]|mağaras[ıi]|oyuklar[ıi]|tünelleri)/gi,
-      'tekinsiz sığınak'
-    );
-  }
-  return masked;
+  return maskUndiscoveredNames(text, locations, currentLocation);
 }
 
 function sanitizeNarrativeOutputForEpistemicSafety(
@@ -207,13 +168,7 @@ function sanitizeNarrativeOutputForEpistemicSafety(
   locations: MapLocation[],
   currentLocation?: MapLocation
 ): string {
-  let clean = maskUndiscoveredLocationNames(text, locations, currentLocation);
-  clean = clean
-    .replace(/\b[A-P][1-9]\s*(?:mazgal[ıia]?|karesi(?:ne|nde|nden)?)\b/gi, 'bu bölge')
-    .replace(/\bmazgal(?:[ıia]|da|dan|lar[ıa]?)?\b/gi, 'bölge')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return clean;
+  return sanitizeNarrativeOutput(text, locations, currentLocation);
 }
 
 function getCurrentContext(state: NarrativeWorkingState): {
@@ -416,6 +371,15 @@ function applySleepCollapseOrFatigueNotice(
       note: `Aşırı uykusuzluktan kendinden geçip ${res.sleepHours} saat sonra burada uyandın.`,
     });
     state.engineFacts.push(res.collapseFact);
+    state.actionRecords.push({
+      category: 'travel',
+      subType: 'sleep_collapse',
+      summary: res.collapseFact,
+      outcomeTone: 'critical',
+      focusDirective:
+        'Aşırı uykusuzluktan Eşref’in bilincinin kapanıp yığıldığını ve saatler sonra rastgele yabancı bir noktada gözlerini açtığını net biçimde yaz.',
+      forbiddenHints: [],
+    });
   } else if (res.hoursAwake >= 22) {
     const hrs = Math.round(res.hoursAwake);
     state.engineFacts.push(
@@ -717,6 +681,39 @@ export function executeNarrativeToolCall(
 
     if (notices.length > 0) fact += ` Dünya bildirimi: ${notices[0]}`;
     state.engineFacts.push(fact);
+
+    const priorPosture = detectScenePosture({
+      currentLocation,
+      recentMessages: state.recentMessages ?? [],
+      currentPlayerText: state.playerActionText ?? '',
+      movedThisTurn: state.movedThisTurn,
+      actionRecords: state.actionRecords,
+    });
+    const observeDirective =
+      focus === 'climb_vantage'
+        ? !currentLocation && !(!isNight && effectiveVis >= 45)
+          ? `Yalnızca çama tırmanışını ve ~${effectiveVis}m yoğun sis/karanlık yüzünden tepeden bile duman, yapı veya yerleşim görülmediğini 1–2 net cümlede anlat.`
+          : 'Yüksekten görülebilen kadarını kısaca anlat.'
+        : focus === 'self_and_pockets'
+        ? 'Yalnızca Eşref’in üzerindekileri, kesesindeki gümüş/erzağı ve yerdeki iz sonucunu doğrudan aktar.'
+        : focus === 'listen_rumors'
+        ? 'Yalnızca kulak kabartarak duyduğu yakın sesleri veya yerel söylentiyi aktar.'
+        : priorPosture === 'treetop'
+        ? `Eşref hâlâ ağaç tepesinde; yalnızca ~${effectiveVis}m sis/karanlık içinde dallar arasından görebildiğini kısaca söyle.`
+        : 'Önceki turda söylediklerini tekrarlamadan yalnızca yeni gözlem sonucunu ve varsa yakındaki iz/hareketi yaz.';
+    const observeForbidden =
+      focus === 'climb_vantage' || priorPosture === 'treetop'
+        ? ['Eşref şu an ağaç tepesinde: yerdeki toprak, yosun veya ayak sesi tasviri YAPMA!']
+        : [];
+    state.actionRecords.push({
+      category: 'observe',
+      subType: focus,
+      summary: fact,
+      outcomeTone: total >= 12 ? 'success' : 'fail',
+      durationLabel: formatTravelHours(elapsedHours),
+      focusDirective: observeDirective,
+      forbiddenHints: observeForbidden,
+    });
     applySleepCollapseOrFatigueNotice(state, false);
 
     return {
@@ -744,6 +741,14 @@ export function executeNarrativeToolCall(
       const validDirs = currentMazgal.neighbors.map((n) => n.direction).join(', ');
       const fact = `${String(args.direction ?? 'Bu')} yönünde aşılabilir bir yol veya geçit yok. Geçilebilir yönler: ${validDirs}.`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'travel',
+        subType: 'blocked_dir',
+        summary: fact,
+        outcomeTone: 'fail',
+        focusDirective: 'O yönde geçiş olmadığını ve geçilebilir yönleri kısaca belirt.',
+        forbiddenHints: [],
+      });
       return { moved: false, reason: fact, validDirections: validDirs };
     }
 
@@ -788,6 +793,14 @@ export function executeNarrativeToolCall(
         notices.length > 0 ? ` ${notices[0]}` : ''
       }`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'travel',
+        subType: 'blocked_water',
+        summary: fact,
+        outcomeTone: 'fail',
+        focusDirective: 'Suyun kıyısına gelip tekne olmadığı için durduğunu ve açık kara yönlerini net söyle.',
+        forbiddenHints: [],
+      });
       return {
         moved: false,
         blockedByWater: true,
@@ -887,6 +900,20 @@ export function executeNarrativeToolCall(
         : ''
     }${maskedNotices ? ` Yol olayı: ${maskedNotices}` : ''}`;
     state.engineFacts.push(fact);
+    state.actionRecords.push({
+      category: 'travel',
+      subType: 'move',
+      summary: fact,
+      outcomeTone: 'success',
+      durationLabel: formatTravelHours(adjustedHours),
+      movedFromLabel: currentLocation?.name ?? currentMazgal.terrainLabel,
+      movedToLabel: locInside?.name ?? targetCell.terrainLabel,
+      discoveredPlaceName: locInside?.name,
+      focusDirective: locInside
+        ? `Yolculuk süresini ve yeni keşfedilen ${locInside.name} eşiğindeki ilk somut gözlemi net anlat.`
+        : `Yolculuk süresini, yorgunluk/hava etkisini ve ulaşılan ${targetCell.terrainLabel.toLowerCase()} ortamının önceki yerden farkını kısa ve net anlat.`,
+      forbiddenHints: [],
+    });
     applySleepCollapseOrFatigueNotice(state, true);
 
     return {
@@ -1027,6 +1054,17 @@ export function executeNarrativeToolCall(
       notices.length > 0 ? ` Yol olayı: ${notices.join(' ')}` : ''
     }`;
     state.engineFacts.push(fact);
+    state.actionRecords.push({
+      category: 'travel',
+      subType: 'move_settlement',
+      summary: fact,
+      outcomeTone: 'success',
+      durationLabel: formatTravelHours(adjustedHours),
+      movedToLabel: target.name,
+      discoveredPlaceName: target.name,
+      focusDirective: `${target.name} yerleşimine varışı, geçen süreyi ve yerleşim havasını/yol olayını kısaca aktar.`,
+      forbiddenHints: [],
+    });
     applySleepCollapseOrFatigueNotice(state, true);
     return { moved: true, settlement: target.name, hoursSpent: adjustedHours, summary: fact };
   }
@@ -1123,6 +1161,17 @@ export function executeNarrativeToolCall(
         notices.length > 0 ? ` ${notices[0]}` : ''
       }`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'social',
+        subType: 'roaming_chat',
+        summary: fact,
+        outcomeTone: 'neutral',
+        durationLabel: formatTravelHours(elapsedHours),
+        speakerName: unitSpeaker,
+        speakerRole: 'dialogue',
+        focusDirective: `${unitSpeaker} ağzından doğrudan, duruma uygun kısa bir diyalog yanıtı ver.`,
+        forbiddenHints: [],
+      });
       applySleepCollapseOrFatigueNotice(state, false);
       return { interacted: true, target: unitSpeaker, summary: fact };
     }
@@ -1191,6 +1240,17 @@ export function executeNarrativeToolCall(
         actualHours > 0 ? `, +${formatTravelHours(actualHours)}` : ''
       }): ${res.feedbackText}${notices.length > 0 ? ` ${notices[0]}` : ''}`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'social',
+        subType: 'npc_chat',
+        summary: fact,
+        outcomeTone: 'neutral',
+        durationLabel: actualHours > 0 ? formatTravelHours(actualHours) : undefined,
+        speakerName: state.preferredSpeaker,
+        speakerRole: 'dialogue',
+        focusDirective: `${matchedContact.name} karakterinin güven/ruh haline uygun doğrudan ve kısa cevabını yaz.`,
+        forbiddenHints: [],
+      });
       if (actualHours > 0) {
         applySleepCollapseOrFatigueNotice(state, false);
       }
@@ -1262,12 +1322,31 @@ export function executeNarrativeToolCall(
         safeProb ? ` Yerel sorun: ${safeProb}.` : ''
       }${notices.length > 0 ? ` ${notices[0]}` : ''}`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'social',
+        subType: 'resident_chat',
+        summary: fact,
+        outcomeTone: 'neutral',
+        durationLabel: formatTravelHours(elapsedHours),
+        speakerName,
+        speakerRole: 'dialogue',
+        focusDirective: `${speakerName} ağzından doğrudan kısa diyalog ve varsa yerel bilgiyi ver.`,
+        forbiddenHints: [],
+      });
       applySleepCollapseOrFatigueNotice(state, false);
       return { interacted: true, target: speakerName, summary: fact };
     }
 
     const fact = 'Çevrede konuşabilecek hiçbir kişi, yoldaş veya gezgin grup yok; Eşref açık doğada yalnız.';
     state.engineFacts.push(fact);
+    state.actionRecords.push({
+      category: 'social',
+      subType: 'nobody',
+      summary: fact,
+      outcomeTone: 'fail',
+      focusDirective: 'Çevrede konuşacak kimsenin olmadığını net söyle; hayali bir kişi uydurma.',
+      forbiddenHints: [],
+    });
     return { interacted: false, nobodyPresent: true, summary: fact };
   }
 
@@ -1310,6 +1389,15 @@ export function executeNarrativeToolCall(
         notices.length > 0 ? ` ${notices[0]}` : ''
       }`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'combat',
+        subType: 'ambush_group',
+        summary: fact,
+        outcomeTone: 'neutral',
+        durationLabel: '1 Saat',
+        focusDirective: 'Pusu hamlesinin sonucunu, zar etkisini ve alınan/verilen hasarı net ve somut yaz.',
+        forbiddenHints: [],
+      });
       applySleepCollapseOrFatigueNotice(state, false);
       return { ok: true, summary: fact };
     }
@@ -1360,6 +1448,15 @@ export function executeNarrativeToolCall(
       state.rolledDiceThisTurn = true;
       const fact = `${res.feedbackText}${notices.length > 0 ? ` ${notices[0]}` : ''}`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'combat',
+        subType: intent,
+        summary: fact,
+        outcomeTone: 'neutral',
+        durationLabel: '2 Saat',
+        focusDirective: 'Gölge eyleminin sonucunu ve varsa ganimet/itibar etkisini doğrudan anlat.',
+        forbiddenHints: [],
+      });
       applySleepCollapseOrFatigueNotice(state, false);
       return { ok: true, summary: fact };
     }
@@ -1399,6 +1496,15 @@ export function executeNarrativeToolCall(
           notices.length > 0 ? ` ${notices[0]}` : ''
         }`;
     state.engineFacts.push(fact);
+    state.actionRecords.push({
+      category: 'combat',
+      subType: 'skirmish',
+      summary: fact,
+      outcomeTone: won ? 'success' : 'fail',
+      durationLabel: '1 Saat',
+      focusDirective: 'Çatışma/güç hamlesinin sonucunu, yara/zindelik durumunu kısa ve net yaz.',
+      forbiddenHints: [],
+    });
     applySleepCollapseOrFatigueNotice(state, false);
     return { won, roll: total, dc, damage: dmg, loot, summary: fact };
   }
@@ -1420,6 +1526,14 @@ export function executeNarrativeToolCall(
       };
       const fact = `1 porsiyon kuru erzak yendi (Kalan: ${state.protagonist.rations}). Açlık: ${state.protagonist.hunger}/100, Zindelik: ${state.protagonist.stamina}/100.`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'survival',
+        subType: 'rations',
+        summary: fact,
+        outcomeTone: 'success',
+        focusDirective: 'Kuru erzağın yenmesini ve açlık/zindelik etkisini 1 net cümlede anlat.',
+        forbiddenHints: [],
+      });
       return { used: true, summary: fact };
     }
 
@@ -1430,6 +1544,14 @@ export function executeNarrativeToolCall(
     const res = useInventoryItem(state.protagonist, invId, state.gameTimeMs);
     state.protagonist = res.nextProtagonist;
     state.engineFacts.push(res.message);
+    state.actionRecords.push({
+      category: 'survival',
+      subType: invId,
+      summary: res.message,
+      outcomeTone: 'neutral',
+      focusDirective: 'Eşyanın kullanımını ve anlık etkisini 1–2 net cümlede anlat.',
+      forbiddenHints: [],
+    });
     return { used: true, summary: res.message };
   }
 
@@ -1482,6 +1604,15 @@ export function executeNarrativeToolCall(
       state.lastTimeAction = `Yerleşime Destek (+3 Saat)${notices.length > 0 ? ` · ${notices[0]}` : ''}`;
       const fact = `${attempt.message}${notices.length > 0 ? ` ${notices[0]}` : ''}`;
       state.engineFacts.push(fact);
+      state.actionRecords.push({
+        category: 'survival',
+        subType: 'help_settlement_problem',
+        summary: fact,
+        outcomeTone: attempt.solved ? 'success' : 'fail',
+        durationLabel: '3 Saat',
+        focusDirective: 'Yerleşim sorununa yapılan müdahalenin sonucunu net anlat.',
+        forbiddenHints: [],
+      });
       applySleepCollapseOrFatigueNotice(state, false);
       return { solved: attempt.solved, summary: fact };
     }
@@ -1541,6 +1672,18 @@ export function executeNarrativeToolCall(
       notices.length > 0 ? ` ${notices[0]}` : ''
     }`;
     state.engineFacts.push(fact);
+    state.actionRecords.push({
+      category: 'survival',
+      subType: actType,
+      summary: fact,
+      outcomeTone: 'success',
+      durationLabel: `${hours} Saat`,
+      focusDirective:
+        actType === 'rest_camp'
+          ? 'Kamp ve uyku sonrası dinlenmeyi ve yeni gün/saat hissini kısaca anlat.'
+          : 'Etkinliğin sonucunu ve geçen süreyi 1–2 net cümlede anlat.',
+      forbiddenHints: [],
+    });
     if (actType !== 'rest_camp') {
       applySleepCollapseOrFatigueNotice(state, false);
     }
@@ -1613,6 +1756,15 @@ export function executeNarrativeToolCall(
         : ''
     }).${notices.length > 0 ? ` ${notices[0]}` : ''}`;
     state.engineFacts.push(fact);
+    state.actionRecords.push({
+      category: 'free_roleplay',
+      subType: 'free',
+      summary: fact,
+      outcomeTone: 'neutral',
+      durationLabel,
+      focusDirective: 'Serbest eylemin doğrudan sonucunu tekrar yapmadan 1–2 net cümlede anlat.',
+      forbiddenHints: [],
+    });
     if (!isSleepAction) {
       applySleepCollapseOrFatigueNotice(state, false);
     }
@@ -1620,6 +1772,14 @@ export function executeNarrativeToolCall(
   }
 
   state.engineFacts.push(summary);
+  state.actionRecords.push({
+    category: 'free_roleplay',
+    subType: 'free',
+    summary,
+    outcomeTone: 'neutral',
+    focusDirective: 'Serbest eylemin doğrudan karşılığını kısa ve net anlat.',
+    forbiddenHints: [],
+  });
   return { ok: true, minutesSpent: 0, hoursSpent: 0, summary };
 }
 
@@ -1634,6 +1794,179 @@ export interface AiTurnExecutionResult {
   lastTimeAction?: string;
   movedThisTurn: boolean;
   rolledDiceThisTurn: boolean;
+}
+
+function runHeuristicEngineTurn(
+  rawText: string,
+  chosenOption: NarrativeChoice | undefined,
+  state: NarrativeWorkingState
+): void {
+  const norm = normalizeTr(rawText);
+  const { currentLocation } = getCurrentContext(state);
+  const forceObserve = chosenOption?.kind === 'observe';
+  const pace: TravelPace = /\b(gizli\w*|sessiz\w*|temkin\w*|usulca|sokularak)\b/.test(norm)
+    ? 'stealth'
+    : /\b(hizli\w*|kos\w*|acele\w*|depar\w*)\b/.test(norm)
+    ? 'forced'
+    : 'normal';
+
+  // 1. Bilinen yerleşime veya yöne seyahat
+  const hasTravelVerb =
+    /\b(yola cik\w*|git\b|gid\w*|yuru\w*|ilerl\w*|istikamet\w*|geri don\w*|donuyorum|donelim)\b/.test(norm) ||
+    chosenOption?.kind === 'travel';
+
+  if (!forceObserve && hasTravelVerb) {
+    const namedLoc = state.locations.find(
+      (l) =>
+        l.discovered &&
+        l.id !== currentLocation?.id &&
+        (norm.includes(normalizeTr(l.name)) || norm.includes(normalizeTr(l.name.split(' ')[0])))
+    );
+    if (namedLoc) {
+      executeNarrativeToolCall(
+        'travel_to_settlement',
+        { settlementName: namedLoc.name, pace },
+        state
+      );
+      return;
+    }
+
+    const dirPatterns: Array<{ re: RegExp; dir: string }> = [
+      { re: /kuzey\s*bati/, dir: 'Kuzeybatı' },
+      { re: /kuzey\s*dogu/, dir: 'Kuzeydoğu' },
+      { re: /guney\s*bati/, dir: 'Güneybatı' },
+      { re: /guney\s*dogu/, dir: 'Güneydoğu' },
+      { re: /\bkuzey/, dir: 'Kuzey' },
+      { re: /\bguney/, dir: 'Güney' },
+      { re: /\bdogu/, dir: 'Doğu' },
+      { re: /\bbati/, dir: 'Batı' },
+    ];
+    for (const d of dirPatterns) {
+      if (d.re.test(norm)) {
+        executeNarrativeToolCall('travel_direction', { direction: d.dir, pace }, state);
+        return;
+      }
+    }
+  }
+
+  // 2. Envanter kullanımı
+  if (/\b(erzak\w*|peksimet\w*|yemek ye\w*|karnimi doyur\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('use_inventory_or_eat', { item: 'rations' }, state);
+    return;
+  }
+  if (/\b(kekik\w*|sargi\w*|yara sar\w*|sifa\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('use_inventory_or_eat', { item: 'healing_herb' }, state);
+    return;
+  }
+  if (/\b(panzehir\w*|zehir\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('use_inventory_or_eat', { item: 'antidote_vial' }, state);
+    return;
+  }
+  if (/\b(mesale\w*|isik yak\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('use_inventory_or_eat', { item: 'torch_bundle' }, state);
+    return;
+  }
+
+  // 3. Kamp / Dinlenme / Av / Yardım
+  if (/\b(kamp\w*|uyu\w*|dinlen\w*|gecele\w*|yat\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('camp_forage_or_aid', { activity: 'rest_camp' }, state);
+    return;
+  }
+  if (/\b(avlan\w*|avla\w*|odun topla\w*|balik\w*|yiyecek ara\w*|calis\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('camp_forage_or_aid', { activity: 'forage_or_work' }, state);
+    return;
+  }
+  if (
+    currentLocation &&
+    /\b(sorun\w*|mesele\w*|yardim\w*|destek\w*|mudahale\w*)\b/.test(norm)
+  ) {
+    executeNarrativeToolCall('camp_forage_or_aid', { activity: 'help_settlement_problem' }, state);
+    return;
+  }
+
+  // 4. Çatışma / Gölge eylemleri
+  if (/\b(pusu\w*|saldir\w*|vur\w*|kilic\w*|hancer\w*|oldur\w*|baskin\w*)\b/.test(norm)) {
+    executeNarrativeToolCall('combat_or_shadow_action', { intent: 'ambush_group' }, state);
+    return;
+  }
+  if (/\b(cal\w*|hirsiz\w*|gasp\w*|harac\w*|tutsak\w*|kacir\w*)\b/.test(norm)) {
+    const intent = /\b(tutsak\w*|kacir\w*)\b/.test(norm)
+      ? 'capture_captive'
+      : /\b(gasp\w*|harac\w*)\b/.test(norm)
+      ? 'extort'
+      : 'steal_supplies';
+    executeNarrativeToolCall('combat_or_shadow_action', { intent }, state);
+    return;
+  }
+
+  // 5. Tırmanma / İnceleme / Gözlem
+  if (/\b(tirman\w*|agaca cik\w*|tepeye cik\w*)\b/.test(norm)) {
+    executeNarrativeToolCall(
+      'inspect_self_and_surroundings',
+      { focus: 'climb_vantage', durationMinutes: 15, note: rawText },
+      state
+    );
+    return;
+  }
+  if (/\b(cep\w*|ustumu|basimi|kiyafet\w*|yokla\w*|hafiza\w*|kimim)\b/.test(norm)) {
+    executeNarrativeToolCall(
+      'inspect_self_and_surroundings',
+      { focus: 'self_and_pockets', durationMinutes: 3, note: rawText },
+      state
+    );
+    return;
+  }
+  if (currentLocation && /\b(soylenti\w*|kulak kabart\w*|dedikodu\w*)\b/.test(norm)) {
+    executeNarrativeToolCall(
+      'inspect_self_and_surroundings',
+      { focus: 'listen_rumors', durationMinutes: 15, note: rawText },
+      state
+    );
+    return;
+  }
+
+  // 6. Konuşma / Selamlaşma
+  if (
+    !forceObserve &&
+    /\b(konus\w*|sohbet\w*|selam\w*|merhaba|sor\w*|seslen\w*|flort\w*|ikna\w*|pazarlik\w*)\b/.test(norm)
+  ) {
+    const isGreeting = /\b(merhaba|selam\w*)\b/.test(norm) && rawText.length < 40;
+    executeNarrativeToolCall(
+      'interact_npc_or_group',
+      { tone: 'talk', durationMinutes: isGreeting ? 2 : 15 },
+      state
+    );
+    return;
+  }
+
+  // 7. Genel gözlem veya serbest rol yapma
+  if (
+    forceObserve ||
+    /\b(ne gor\w*|goruyorum|bak\w*|izl\w*|gozlem\w*|incele\w*|dinl\w*|ariyorum|arastir\w*|ara\b|gez\w*|dolas\w*)\b/.test(norm)
+  ) {
+    const isShortLook =
+      norm.length < 36 && !/\b(gez\w*|dolas\w*|incele\w*|ariyorum|arastir\w*|tirman\w*)\b/.test(norm);
+    executeNarrativeToolCall(
+      'inspect_self_and_surroundings',
+      {
+        focus: 'tracks_and_area',
+        durationMinutes: isShortLook ? 2 : 15,
+        note: rawText,
+      },
+      state
+    );
+    return;
+  }
+
+  executeNarrativeToolCall(
+    'free_roleplay_action',
+    {
+      physicalEffort: 'light',
+      minutesSpent: 5,
+      summary: rawText,
+    },
+    state
+  );
 }
 
 export async function runAiNarrativeTurn(params: {
@@ -1674,6 +2007,9 @@ export async function runAiNarrativeTurn(params: {
     partyLocationId,
     journeyEntries: [],
     engineFacts: [],
+    actionRecords: [],
+    recentMessages,
+    playerActionText: trimmed,
     hoursSpentTotal: 0,
     movedThisTurn: false,
     rolledDiceThisTurn: false,
@@ -1693,13 +2029,24 @@ export async function runAiNarrativeTurn(params: {
   };
 
   const historyText = recentMessages
-    .slice(-8)
-    .map((m) => `${m.speaker ?? (m.role === 'player' ? protagonist.name : 'Anlatıcı')}: ${m.text}`)
+    .slice(-4)
+    .map((m) => {
+      const spk = m.speaker ?? (m.role === 'player' ? protagonist.name : 'Anlatıcı');
+      const snippet = m.text.length > 220 ? `${m.text.slice(0, 220)}...` : m.text;
+      return `${spk}: ${snippet}`;
+    })
     .join('\n');
 
-  const initialContextText = buildAiContextSnapshot(workingState);
+  const initialContextText = buildPlannerContextBrief({
+    protagonist: workingState.protagonist,
+    locations: workingState.locations,
+    currentLocation,
+    currentMazgal,
+    activeWeatherKey: workingState.activeWeatherKey,
+    gameTimeMs: workingState.gameTimeMs,
+  });
   const initialUserTurnText = [
-    `[MEVCUT DÜNYA BAĞLAMI]\n${initialContextText}`,
+    `[PLANLAMA BAĞLAMI]\n${initialContextText}`,
     historyText ? `[SON SOHBET]\n${historyText}` : '',
     `[OYUNCU EYLEMİ${chosenOption ? ` (Seçilen Öneri Türü: ${chosenOption.kind})` : ''}]\n${trimmed}`,
   ]
@@ -1727,6 +2074,25 @@ export async function runAiNarrativeTurn(params: {
       round === 0 || (round === 1 && needsChainedPlan) ? 'plan' : 'finalize';
 
     if (aiSettings?.provider === 'anythinkllm') {
+      if (workingState.engineFacts.length === 0) {
+        runHeuristicEngineTurn(trimmed, chosenOption, workingState);
+      }
+      const postCtx = getCurrentContext(workingState);
+      const focusedSceneCard = buildFocusedSceneCard({
+        protagonist: workingState.protagonist,
+        locations: workingState.locations,
+        currentLocation: postCtx.currentLocation,
+        currentMazgal: postCtx.currentMazgal,
+        activeWeatherKey: workingState.activeWeatherKey,
+        gameTimeMs: workingState.gameTimeMs,
+        recentMessages,
+        playerActionText: trimmed,
+        actionRecords: workingState.actionRecords,
+        engineFacts: workingState.engineFacts,
+        movedThisTurn: workingState.movedThisTurn,
+        preferredSpeaker: workingState.preferredSpeaker,
+        preferredRole: workingState.preferredRole,
+      });
       const anyThinkMessages = (
         turnContents as Array<{ role?: string; parts?: Array<Record<string, unknown>> }>
       )
@@ -1746,7 +2112,7 @@ export async function runAiNarrativeTurn(params: {
           apiKey: aiSettings.anythinkllmApiKey,
           model: aiSettings.anythinkllmModel,
           messages: anyThinkMessages,
-          contextSnapshotText: buildAiContextSnapshot(workingState),
+          contextSnapshotText: focusedSceneCard,
           historyText,
           engineFacts: workingState.engineFacts,
           playerActionText: trimmed,
@@ -1788,6 +2154,26 @@ export async function runAiNarrativeTurn(params: {
       break;
     }
 
+    const postCtx = getCurrentContext(workingState);
+    const contextPayloadForStep =
+      mode === 'finalize'
+        ? buildFocusedSceneCard({
+            protagonist: workingState.protagonist,
+            locations: workingState.locations,
+            currentLocation: postCtx.currentLocation,
+            currentMazgal: postCtx.currentMazgal,
+            activeWeatherKey: workingState.activeWeatherKey,
+            gameTimeMs: workingState.gameTimeMs,
+            recentMessages,
+            playerActionText: trimmed,
+            actionRecords: workingState.actionRecords,
+            engineFacts: workingState.engineFacts,
+            movedThisTurn: workingState.movedThisTurn,
+            preferredSpeaker: workingState.preferredSpeaker,
+            preferredRole: workingState.preferredRole,
+          })
+        : '';
+
     const res = await fetch('/api/narrative/step', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1799,7 +2185,7 @@ export async function runAiNarrativeTurn(params: {
         turnContents,
         playerActionText: trimmed,
         chosenOptionKind: chosenOption?.kind,
-        contextSnapshotText: buildAiContextSnapshot(workingState),
+        contextSnapshotText: contextPayloadForStep,
         historyText,
         engineFacts: workingState.engineFacts,
         preferredRole: workingState.preferredRole,
@@ -1866,6 +2252,12 @@ export async function runAiNarrativeTurn(params: {
     }
 
     if (data.status === 'final' && data.narrative) {
+      if (round === 0 && workingState.engineFacts.length === 0) {
+        runHeuristicEngineTurn(trimmed, chosenOption, workingState);
+        if (workingState.engineFacts.length > 0) {
+          continue;
+        }
+      }
       finalPayload = data.narrative;
       break;
     }

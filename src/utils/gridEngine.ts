@@ -535,7 +535,7 @@ export function buildMazgalGrid(
       }
 
       if (effects.length === 0) {
-        effects.push('Komşu mazgallarla benzer arazi karakteri taşır; olağan dışı bir sınır etkisi yoktur.');
+        effects.push('Çevredeki arazi dokusu benzer; olağan dışı bir sınır etkisi yok.');
       }
 
       visibility = Math.max(8, visibility);

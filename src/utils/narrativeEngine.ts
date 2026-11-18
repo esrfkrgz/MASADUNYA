@@ -447,10 +447,10 @@ export function resolveNarrativeTurn(input: NarrativeTurnInput): NarrativeTurnOu
     }
 
     const dirMap: Array<{ words: string[]; dir: string }> = [
-      { words: ['kuzeybati'], dir: 'Kuzeybatı' },
-      { words: ['kuzeydogu'], dir: 'Kuzeydoğu' },
-      { words: ['guneybati'], dir: 'Güneybatı' },
-      { words: ['guneydogu'], dir: 'Güneydoğu' },
+      { words: ['kuzeybati', 'kuzey bati'], dir: 'Kuzeybatı' },
+      { words: ['kuzeydogu', 'kuzey dogu'], dir: 'Kuzeydoğu' },
+      { words: ['guneybati', 'guney bati'], dir: 'Güneybatı' },
+      { words: ['guneydogu', 'guney dogu'], dir: 'Güneydoğu' },
       { words: ['kuzey'], dir: 'Kuzey' },
       { words: ['guney'], dir: 'Güney' },
       { words: ['dogu'], dir: 'Doğu' },

@@ -433,32 +433,28 @@ GÖREVİN (ADIM 1 - ARAÇ ÇAĞIRMA):
 const NARRATOR_SYSTEM_INSTRUCTION = `Sen "Sisli Doğu Atlası" masaüstü RPG oyununun baş anlatıcısı ve NPC sesisin.
 Ana karakter Eşref (18 yaşında, 185 cm, esmer, atletik, karizmatik; hafıza kaybı yaşıyor).
 
-=== 1. SİSLİ ORMAN FİZİĞİ VE SINIRLI GÖRÜŞ MESAFESİ (ZORUNLU) ===
-- Eşref devasa, soğuk ve kesif sisle kaplı bir sınır ormanındadır; her bölge ~18 fersah (~90 km) genişliğindedir ve görüş alanı [Işık ve Görüş Sınırı] satırındaki fiziksel yarıçapla (ormanda genellikle 15–30 metre, yoğun sis/fırtınada 10–18 metre, meşalesiz gecede yalnızca ~5 metre) KESİNLİKLE sınırlıdır.
-- DUYUSAL ÇEMBER KURALI: Yalnızca Eşref'in şu an bulunduğu noktada kendi beş duyusuyla (görebildiği dar sis çemberi, adım attığı toprak/yosun, yakındaki ağaç gövdeleri, işitebildiği yakın hışırtı/ayak sesi, tenindeki soğuk rüzgar, burnuna gelen ıslak çam/reçine kokusu) doğrudan deneyimleyebileceği şeyleri anlat.
-- Sisin, sık ağaçların veya gece karanlığının ötesindeki uzak vadileri, komşu arazileri, ufuktaki gölleri, köyleri, kuleleri, kamp ateşlerini veya kilometrelerce öteden yükselen dumanları GÖRÜNÜR KILMA. Görüş 5–30 metre iken uzak manzara tasvir etmek yasaktır.
+=== 1. SİSLİ ORMAN FİZİĞİ VE SINIRLI GÖRÜŞ MESAFESİ ===
+- Her bölge ~18 fersah (~90 km) genişliğindedir. Görüş alanı [ODAKLI SAHNE KARTI] içindeki "Zaman & Görüş" değeriyle (ormanda ~15–30 m, yoğun sis/fırtınada ~10–18 m, meşalesiz gecede ~5 m) sınırlıdır.
+- Yalnızca Eşref'in bulunduğu noktada kendi duyularıyla doğrudan fark edebileceği yakın unsurları yaz.
+- Sisin veya gece karanlığının ötesindeki uzak vadileri, komşu arazileri, ufuktaki gölleri, köyleri, kuleleri veya kilometrelerce öteden yükselen dumanları GÖRÜNÜR KILMA.
 
 === 2. EPİSTEMİK BİLGİ SINIRI — GİZLİ KAMPLAR VE UZAK OLAYLAR YASAĞI ===
-- Oyun motoru arka planda tüm haritayı ve tehlikeleri bilir; ANCAK Eşref hafızasını yitirmiştir ve dünyayı sıfırdan, adım adım keşfetmektedir. Anlatıcının bildiği dünya sırrını Eşref'in bilmesine İMKÂN YOKTUR.
-- ŞU BİLGİLERİ DOĞRUDAN VEYA DOLAYLI OLARAK ASLA AÇIK ETME:
-  a) Keşfedilmemiş köy, kale, han, harabe veya gizli goblin/kobold inleri ve haydut kampları (hem özel adları hem de sisin/dağın ardında saklandıkları gerçeği kesinlikle yasaktır).
-  b) Uzak veya keşfedilmemiş yerleşimlerde yaşanan baskınlar, hırsızlıklar, kaybolan kervanlar, vergi krizleri veya perde arkası klan planları (Eşref'in şu an bulunduğu yerde duyup görmesi imkânsız olan hiçbir uzak olay).
-  c) Henüz tanışılmamış NPC adları, gizli kabile/klan isimleri veya gölge düşmanların kimlikleri.
-- Yalnızca [DÜNYA BAĞLAMI] içindeki "Bilinen Yerleşim ve Noktalar" ile "Yanındaki / Konumdaki Kişiler" listelerinde yer alan isimleri kullanabilirsin.
-- Sahnede kimliği belirsiz bir grup veya tehlike varsa, bunu yalnızca Eşref'in o anda gördüğü/duyduğu fiziksel belirtilerle anlat (ör. "sisin içinden çıkan kısa boylu, paslı silahlı karartılar", "çalılıkların ardında metal tıngırtısı"); asla özel klan adı, geldikleri gizli kamp adı veya arka plan niyeti söyleme.
+- Eşref hafızasını yitirmiştir; yalnızca [ODAKLI SAHNE KARTI] içinde izin verilen "Seçenek Sınırları" ve "Sahnedeki Varlıklar" adlarını bilir.
+- Keşfedilmemiş köy/kale/han/harabe adlarını, gizli goblin/kobold inlerini, haydut kamplarını, uzak yerleşimlerdeki olayları veya tanışılmamış klan/NPC adlarını anlatımda ve 4 seçenekte ASLA açık etme.
+- Kimliği belirsiz bir tehlike varsa yalnızca o an algılanan fiziksel belirtiyle anlat (ör. "sisin içinde kısa boylu, paslı silahlı iki karartı").
 
-=== 3. MOTOR GERÇEKLİĞİ VE UYDURMA YASAĞI ===
-- YALNIZCA motor tarafından doğrulanmış [KESİN MOTOR SONUÇLARI] ve [DÜNYA BAĞLAMI] içindeki gerçek olaylara sadık kal. Olmayan eşya, gümüş, NPC, yerleşim, zar başarısı, kamp ateşi, duman, iskele, matara, sandık, mektup veya iz ASLA uydurma.
-- Eğer motor başarısız bir zar, yaralanma, reddedilme veya "etrafta kimse yok" sonucu döndürdüyse bunu sahneye dürüstçe ve atmosferik biçimde yansıt.
-- HARİTA YÖNÜ TUTARLILIĞI: Yönleri anlatırken yalnızca [Ulaşılabilir Yönler] listesindeki gerçek verilere sadık kal. "Sis ve örtü ardı görünmüyor" yazan bir yönde göl, dağ veya yerleşim varmış gibi yazma.
-- ASLA "G4", "G5", "H4", "mazgal", "karesi" gibi teknik harita/ızgara kodları kullanma! Mekânları yalnızca atmosferik arazi dokusu, doğa unsurları, yönler (kuzey, güneybatı vb.) veya Eşref'in bildiği gerçek yer adlarıyla anlat.
+=== 3. MOTOR KARARINA VE FİZİKSEL KONUMA SADAKAT ===
+- Sahneyi baştan yazma: [ODAKLI SAHNE KARTI] içindeki "Etkileyen Motor Unsurları", "[MOTOR KARARI / NE OLDU]" ve "[ANLATIM ODAĞI]" talimatlarına %100 uy.
+- Olmayan eşya, gümüş, NPC, kamp ateşi, duman, iskele, matara, sandık, mektup veya iz uydurma; "G4", "mazgal", "karesi" gibi teknik kodlar kullanma.
+- FİZİKSEL KONUM TUTARLILIĞI: "Konum & Pozisyon" ne diyorsa ona uy. Örneğin Eşref ağaç tepesindeyse yerdeki toprak, yosun veya ayak sesinden bahsetme.
 
-=== 4. ÜSLUP, UYKUSUZLUK VE 4 SEÇENEK KURALI ===
-- Dil: Akıcı, edebi ama gereksiz uzatmadan 2–4 cümlelik sürükleyici Türkçe.
-- Bir NPC veya gezgin grup doğrudan Eşref'e karşılık verdiyse role="dialogue", speaker="<Kişi/Grup Adı>" seç ve doğrudan konuşma üslubuyla yaz; aksi hâlde role="narrator", speaker="Anlatıcı" kullan.
-- [Uykusuzluk Durumu] veya [KESİN MOTOR SONUÇLARI] içinde uykusuzluk uyarısı varsa yorgunluğu hissettir; "AŞIRI UYKUSUZLUK VE BAYGINLIK" sonucu gelirse Eşref'in bilincinin kapanıp nerede olduğunu anlamadan yığıldığını ve saatler sonra rastgele yabancı bir noktada gözlerini açtığını anlat.
-- Her yanıtın sonunda Eşref'in o anki duyusal durumuna uygun TAM 4 ADET kısa, çeşitli devam seçeneği (choices) üret.
-- ÖNERİLEN 4 SEÇENEKTE DE SİS VE BİLGİ SINIRI GEÇERLİDİR: Hem "label" hem "actionPrompt" içinde keşfedilmemiş yer/kamp/klan adları, uzak olaylar, sahnede olmayan nesneler (sönmüş ateş, hayali iskele vb.) veya Eşref'in bilmesinin imkânsız olduğu hedefler ASLA yer alamaz.`;
+=== 4. NET, DUYUSAL VE ÖZ ANLATIM (TEKRAR YASAĞI) ===
+- ÜSLUP: Net, somut, duyusal odaklı ve öz 1–3 cümle yaz. Ağdalı edebi süslemeler, şiirsel benzetmeler ve basmakalıp klişeler ("ürkütücü bir melodi", "görkemli sessizlik", "sürekli aynı koku/sis tarifi") KESİNLİKLE YASAKTIR.
+- TEKRAR YASAĞI: [SON SOHBET GEÇMİŞİ] içinde geçen çevre, zemin, ağaç, sis veya ses tasvirlerini tekrarlama. Her yanıt yalnızca motor kararının getirdiği yeni bilgiyi anlatmalıdır.
+- DOĞRUDAN YANIT: Oyuncunun son aksiyonuna veya sorusuna doğrudan, lafı uzatmadan karşılık ver.
+- Bir NPC/grup doğrudan konuştuysa role="dialogue", speaker="<Kişi/Grup Adı>" seç; aksi hâlde role="narrator", speaker="Anlatıcı" kullan.
+- Uykusuzluk uyarısı veya "AŞIRI UYKUSUZLUK VE BAYGINLIK" sonucu varsa bunu net ve kısa yansıt.
+- Her yanıtın sonunda duruma uygun TAM 4 ADET kısa devam seçeneği (choices) üret; seçeneklerin "label" ve "actionPrompt" alanlarında da "Seçenek Sınırları" dışına çıkma.`;
 
 const NARRATIVE_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -475,7 +471,7 @@ const NARRATIVE_RESPONSE_SCHEMA = {
     text: {
       type: Type.STRING,
       description:
-        '2-4 cümlelik akıcı, motor sonuçlarıyla %100 tutarlı Türkçe anlatı veya diyalog. Eşrefin bilmediği keşfedilmemiş yer, klan veya NPC adlarını ASLA içermez.',
+        '1-3 cümlelik net, duyusal odaklı, tekrar içermeyen ve oyuncunun aksiyonuna doğrudan yanıt veren öz Türkçe anlatı veya diyalog. Edebi süsleme ve keşfedilmemiş yer, klan veya NPC adı içermez.',
     },
     choices: {
       type: Type.ARRAY,
@@ -708,6 +704,21 @@ async function startServer() {
           ? body.engineFacts.map((f, i) => `${i + 1}. ${f}`).join('\n')
           : 'Mekanik durum değişimi yok; saf atmosferik veya rol yapma sahnesi.';
 
+      const hasSceneCard = (body.contextSnapshotText ?? '').includes('[ODAKLI SAHNE KARTI]');
+      const anyThinkPrompt = body.contextSnapshotText
+        ? [
+            body.contextSnapshotText,
+            body.historyText ? `[SON SOHBET GEÇMİŞİ — TEKRAR ETME]\n${body.historyText}` : '',
+            `[EŞREF'İN SON EYLEMİ]\n${body.playerActionText ?? ''}`,
+            !hasSceneCard ? `[KESİN MOTOR SONUÇLARI]\n${factsBlock}` : '',
+            body.preferredSpeaker
+              ? `[KONUŞMA İPUCU]\nBu turda "${body.preferredSpeaker}" (${body.preferredRole ?? 'dialogue'}) doğrudan yanıt verdi; anlatımı veya diyaloğu bununla uyumlu kur.`
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+        : '';
+
       const anythinkResponse = await fetch(anyThinkEndpointBase, {
         method: 'POST',
         headers: {
@@ -723,9 +734,11 @@ async function startServer() {
                 NARRATOR_SYSTEM_INSTRUCTION +
                 '\nYanıtını SADECE JSON olarak ver. Kod bloğu, üçlü ters tırnak veya açıklama ekleme. Şema: {"speaker":"...","role":"narrator veya dialogue","text":"...","choices":[{"label":"...","actionPrompt":"...","kind":"observe|talk|action|risk|travel|rest"}]}',
             },
-            ...messages,
+            ...(anyThinkPrompt
+              ? [{ role: 'user', content: anyThinkPrompt }]
+              : messages),
           ],
-          temperature: 0.7,
+          temperature: 0.65,
           response_format: { type: 'json_object' },
         }),
       });
@@ -823,11 +836,12 @@ async function startServer() {
           ? body.engineFacts.map((f, i) => `${i + 1}. ${f}`).join('\n')
           : 'Mekanik durum değişimi yok; saf atmosferik veya rol yapma sahnesi.';
 
+      const hasSceneCard = (body.contextSnapshotText ?? '').includes('[ODAKLI SAHNE KARTI]');
       const narratorPrompt = [
-        `[DÜNYA BAĞLAMI]\n${body.contextSnapshotText ?? ''}`,
-        body.historyText ? `[SON SOHBET GEÇMİŞİ]\n${body.historyText}` : '',
+        body.contextSnapshotText ? body.contextSnapshotText : '',
+        body.historyText ? `[SON SOHBET GEÇMİŞİ — TEKRAR ETME]\n${body.historyText}` : '',
         `[EŞREF'İN SON EYLEMİ${body.chosenOptionKind ? ` (${body.chosenOptionKind})` : ''}]\n${body.playerActionText ?? ''}`,
-        `[KESİN MOTOR SONUÇLARI]\n${factsBlock}`,
+        !hasSceneCard ? `[KESİN MOTOR SONUÇLARI]\n${factsBlock}` : '',
         body.preferredSpeaker
           ? `[KONUŞMA İPUCU]\nBu turda "${body.preferredSpeaker}" (${body.preferredRole ?? 'dialogue'}) doğrudan yanıt verdi; anlatımı veya diyaloğu bununla uyumlu kur.`
           : '',
