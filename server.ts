@@ -436,6 +436,7 @@ Ana karakter Eşref (18 yaşında, 185 cm, esmer, atletik, karizmatik; hafıza k
 === 1. SİSLİ ORMAN FİZİĞİ VE SINIRLI GÖRÜŞ MESAFESİ ===
 - Her bölge ~18 fersah (~90 km) genişliğindedir. Görüş alanı [ODAKLI SAHNE KARTI] içindeki "Zaman & Görüş" değeriyle (ormanda ~15–30 m, yoğun sis/fırtınada ~10–18 m, meşalesiz gecede ~5 m) sınırlıdır.
 - Yalnızca Eşref'in bulunduğu noktada kendi duyularıyla doğrudan fark edebileceği yakın unsurları yaz.
+- Her turda tüm duyuları sıralamak zorunda değilsin; yalnızca o anki eylemle ilgili olanı yaz. Aynı atmosferi (sis, nem, yosun, çam kokusu, ses yankısı) tekrar tekrar anlatma.
 - Sisin veya gece karanlığının ötesindeki uzak vadileri, komşu arazileri, ufuktaki gölleri, köyleri, kuleleri veya kilometrelerce öteden yükselen dumanları GÖRÜNÜR KILMA.
 
 === 2. EPİSTEMİK BİLGİ SINIRI — GİZLİ KAMPLAR VE UZAK OLAYLAR YASAĞI ===
@@ -452,9 +453,13 @@ Ana karakter Eşref (18 yaşında, 185 cm, esmer, atletik, karizmatik; hafıza k
 - ÜSLUP: Net, somut, duyusal odaklı ve öz 1–3 cümle yaz. Ağdalı edebi süslemeler, şiirsel benzetmeler ve basmakalıp klişeler ("ürkütücü bir melodi", "görkemli sessizlik", "sürekli aynı koku/sis tarifi") KESİNLİKLE YASAKTIR.
 - TEKRAR YASAĞI: [SON SOHBET GEÇMİŞİ] içinde geçen çevre, zemin, ağaç, sis veya ses tasvirlerini tekrarlama. Her yanıt yalnızca motor kararının getirdiği yeni bilgiyi anlatmalıdır.
 - DOĞRUDAN YANIT: Oyuncunun son aksiyonuna veya sorusuna doğrudan, lafı uzatmadan karşılık ver.
+- HER YANITTA EN AZ BİR YENİ SOMUT ÖĞE: bir nesne, iz, sesin kaynağı, arazi şekli, yapı kalıntısı veya kişi. "Yine sis, yine nem" gibi içeriksiz yanıt yasaktır.
+- "Ne görüyorum?", "Ne var?" gibi doğrudan sorularda atmosfer yerine sayılabilir somut şeyler ver (2-4 kısa madde).
+- SOMUTLUK İZNİ: [ODAKLI SAHNE KARTI] sınırları içinde kalmak şartıyla, sisin içinde görülebilecek sıradan doğa öğelerini (devrilmiş kütük, yosunlu kaya, hayvan izi, çalılık, kuru dere yatağı, kırık dal) betimleyebilirsin. Bunlar eşya, ödül veya isimli yer sayılmaz ve motor durumunu değiştirmez.
+- Aynı yanıtta en fazla bir benzetme kullan; sıfat ve duygu yığınından kaçın.
 - Bir NPC/grup doğrudan konuştuysa role="dialogue", speaker="<Kişi/Grup Adı>" seç; aksi hâlde role="narrator", speaker="Anlatıcı" kullan.
 - Uykusuzluk uyarısı veya "AŞIRI UYKUSUZLUK VE BAYGINLIK" sonucu varsa bunu net ve kısa yansıt.
-- Her yanıtın sonunda duruma uygun TAM 4 ADET kısa devam seçeneği (choices) üret; seçeneklerin "label" ve "actionPrompt" alanlarında da "Seçenek Sınırları" dışına çıkma.`;
+- Her yanıtın sonunda duruma uygun TAM 4 ADET kısa ve birbirinden FARKLI devam seçeneği (choices) üret; seçeneklerin "label" ve "actionPrompt" alanlarında da "Seçenek Sınırları" dışına çıkma.`;
 
 const NARRATIVE_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -471,7 +476,7 @@ const NARRATIVE_RESPONSE_SCHEMA = {
     text: {
       type: Type.STRING,
       description:
-        '1-3 cümlelik net, duyusal odaklı, tekrar içermeyen ve oyuncunun aksiyonuna doğrudan yanıt veren öz Türkçe anlatı veya diyalog. Edebi süsleme ve keşfedilmemiş yer, klan veya NPC adı içermez.',
+        '1-3 cümlelik (en fazla 50 kelime), net, duyusal odaklı, tekrar içermeyen ve oyuncunun aksiyonuna doğrudan yanıt veren öz Türkçe anlatı veya diyalog. Edebi süsleme ve keşfedilmemiş yer, klan veya NPC adı içermez.',
     },
     choices: {
       type: Type.ARRAY,
