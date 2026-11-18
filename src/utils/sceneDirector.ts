@@ -355,6 +355,11 @@ export function buildFocusedSceneCard(params: {
   const vis = getEffectiveVisibility(gameTimeMs, protagonist, currentMazgal);
   const mods = getProtagonistModifiers(protagonist, currentLocation, currentMazgal);
   const hoursAwake = Math.round(getHoursWithoutSleep(protagonist, gameTimeMs));
+  const inventoryLine =
+    (protagonist.inventory ?? [])
+      .filter((i) => i.qty > 0)
+      .map((i) => `${i.name} x${i.qty}`)
+      .join(', ') || 'Yok';
 
   const postureLabel =
     posture === 'treetop'
@@ -480,6 +485,7 @@ export function buildFocusedSceneCard(params: {
         : `${WEATHER_SHORT[activeWeatherKey]} (~${vis.effectiveVisibilityMeters}m görüş)`
     }`,
     factors.length > 0 ? `Etkileyen Motor Unsurları: ${factors.join(' | ')}` : '',
+    `Çanta & Kese: ${protagonist.silver} gümüş, ${protagonist.rations} kuru erzak | Eşyalar: ${inventoryLine}`,
     `Sahnedeki Varlıklar: ${presenceLine}`,
     `\n[MOTOR KARARI / NE OLDU]\n${resultsBlock}`,
     `\n[ANLATIM ODAĞI]\n- ${focusLines.join('\n- ')}`,
