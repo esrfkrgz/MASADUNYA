@@ -28,9 +28,17 @@ import {
   recordRoamingArrivalOnLocation,
   resolveSettlementProblemByParty,
 } from './livingWorldEngine';
+import {
+  inferRiskCategory,
+  resolveActionRisk,
+  type RiskCategory as ActionRiskCategory,
+  type ActionRiskInput,
+  type ActionRiskOutcome,
+} from './actionRiskEngine';
 import { buildContextualChoices } from './narrativeEngine';
 import { forceFirstPersonAction, guardNarrativeText } from './narrativeGuard';
 import {
+  hasDescentIntent,
   hasForageIntent,
   hasStealIntent,
   normalizeTr,
@@ -538,6 +546,110 @@ export function buildAiContextSnapshot(state: NarrativeWorkingState): string {
     .join('\n');
 }
 
+/** Eylemin risk hesabı için çevre + metrik girdisini oluşturur. */
+function buildActionRiskInput(
+  state: NarrativeWorkingState,
+  category: ActionRiskCategory,
+  actionText: string
+): ActionRiskInput {
+  const { currentLocation, currentMazgal } = getCurrentContext(state);
+  const mods = getProtagonistModifiers(state.protagonist, currentLocation, currentMazgal);
+  const norm = normalizeTr(actionText);
+  const dayPhase = getDayPhaseLabel(state.gameTimeMs);
+  const isNight = dayPhase === 'Gece' || dayPhase === 'Gece Yarısı';
+  const hasTorchLit = (state.protagonist.activeConditions ?? []).includes('Meşale Işığı');
+  const hoursAwake = getHoursWithoutSleep(state.protagonist, state.gameTimeMs);
+  const terrainFold = normalizeTr(`${currentMazgal.terrainLabel} ${currentMazgal.terrain}`);
+  const weather = String(state.activeWeatherKey).toLowerCase();
+
+  return {
+    category,
+    roll: rollDie(20),
+    secondaryRoll: rollDie(6),
+    mods: { physical: mods.physicalMod, perception: mods.perceptionMod, social: mods.socialMod },
+    nightWithoutTorch: isNight && !hasTorchLit,
+    lowVisibility: currentMazgal.visibilityMeters < 20,
+    wetGround: /marsh|river|nemli|islak|yosun|sis/.test(terrainFold),
+    heavyWeather: /rain|storm|firtina|yagmur/.test(weather),
+    exhausted: hoursAwake >= 20 || state.protagonist.stamina <= 30,
+    careful: /\b(yavas\w*|dikkat\w*|temkin\w*|usulca|sessiz\w*)/.test(norm),
+    rushing: /\b(hizli\w*|acele\w*|kos\w*|depar\w*)/.test(norm),
+  };
+}
+
+function riskSceneRecord(outcome: ActionRiskOutcome): {
+  category: SceneActionRecord['category'];
+  subType: string;
+  outcomeTone: SceneActionRecord['outcomeTone'];
+} {
+  const failed = outcome.healthLoss > 0 || outcome.degree === 'failure' || outcome.degree === 'critical_failure';
+  if (outcome.category === 'climb' && !failed) {
+    return { category: 'observe', subType: 'climb_vantage', outcomeTone: 'success' };
+  }
+  if (outcome.category === 'climb') {
+    return { category: 'survival', subType: 'descend_from_vantage', outcomeTone: 'fail' };
+  }
+  if (outcome.category === 'descend') {
+    return {
+      category: 'survival',
+      subType: 'descend_from_vantage',
+      outcomeTone: failed ? 'fail' : 'success',
+    };
+  }
+  const category: SceneActionRecord['category'] =
+    outcome.category === 'inspect'
+      ? 'observe'
+      : outcome.category === 'travel'
+      ? 'travel'
+      : outcome.category === 'social'
+      ? 'social'
+      : outcome.category === 'forage' || outcome.category === 'stealth' || outcome.category === 'rest'
+      ? 'survival'
+      : 'free_roleplay';
+  return {
+    category,
+    subType: outcome.category,
+    outcomeTone: failed ? 'fail' : outcome.degree === 'critical_success' ? 'critical' : 'success',
+  };
+}
+
+/** Risk sonucunu can/zindelik/süre ve motor gerçeği olarak duruma işler. */
+function applyActionRisk(
+  state: NarrativeWorkingState,
+  outcome: ActionRiskOutcome,
+  focusSuffix = ''
+): ActionRiskOutcome {
+  const p = state.protagonist;
+  const conditions = [...(p.activeConditions ?? [])];
+  if (outcome.condition && !conditions.includes(outcome.condition)) {
+    conditions.push(outcome.condition);
+  }
+  state.protagonist = {
+    ...p,
+    health: Math.max(5, p.health - outcome.healthLoss),
+    stamina: Math.max(5, p.stamina - outcome.staminaLoss),
+    activeConditions: conditions.slice(0, 4),
+    lastObservation: outcome.fact,
+    lastUpdatedMs: state.gameTimeMs,
+  };
+  state.rolledDiceThisTurn = true;
+  state.engineFacts.push(outcome.fact);
+  const record = riskSceneRecord(outcome);
+  state.actionRecords.push({
+    category: record.category,
+    subType: record.subType,
+    summary: outcome.fact,
+    outcomeTone: record.outcomeTone,
+    durationLabel: formatTravelHours(outcome.minutes / 60),
+    focusDirective: `${outcome.focusDirective}${focusSuffix ? ` ${focusSuffix}` : ''}`,
+    forbiddenHints:
+      outcome.healthLoss > 0
+        ? ['Yaralanma/düşme sonucunu gizleme veya başarı gibi anlatma.', 'Can ve zindelik sayılarını birebir aktar.']
+        : [],
+  });
+  return outcome;
+}
+
 export function executeNarrativeToolCall(
   toolName: string,
   args: Record<string, unknown>,
@@ -546,6 +658,58 @@ export function executeNarrativeToolCall(
   const { currentLocation, currentMazgal } = getCurrentContext(state);
   const mods = getProtagonistModifiers(state.protagonist, currentLocation, currentMazgal);
   const living = currentLocation?.livingState;
+
+  if (toolName === 'descend_from_vantage') {
+    // Önceki pozisyonu, oyuncunun "aşağı in" cümlesini yok sayarak bul:
+    // detectScenePosture o cümleyi görünce hemen 'ground' döndürüyordu.
+    const priorPosture = detectScenePosture({
+      currentLocation,
+      recentMessages: state.recentMessages ?? [],
+      currentPlayerText: '',
+      movedThisTurn: state.movedThisTurn,
+      actionRecords: state.actionRecords,
+    });
+    if (priorPosture !== 'treetop') {
+      const noRiskFact = 'Zemin üzerindesin; aşağı inmen gerekmiyor, düşme riski oluşmadı.';
+      state.engineFacts.push(noRiskFact);
+      state.actionRecords.push({
+        category: 'survival',
+        subType: 'descend_from_vantage',
+        summary: noRiskFact,
+        outcomeTone: 'neutral',
+        focusDirective: 'İnişe gerek olmadığını tek kısa cümlede söyle; düşme uydurma.',
+        forbiddenHints: [],
+      });
+      return { moved: false, fell: false, fact: noRiskFact };
+    }
+
+    const outcome = applyActionRisk(
+      state,
+      resolveActionRisk(
+        buildActionRiskInput(
+          state,
+          'descend',
+          String(args.note ?? state.playerActionText ?? 'ağaçtan aşağı iniyorum')
+        )
+      )
+    );
+    const prevMs = state.gameTimeMs;
+    const nextMs = addGameMinutes(prevMs, outcome.minutes);
+    const notices = advanceWorldStateInTurn(state, prevMs, nextMs, currentLocation, currentMazgal);
+    state.hoursSpentTotal += outcome.minutes / 60;
+    state.lastTimeAction = `Ağaçtan iniş (+${formatTravelHours(outcome.minutes / 60)})${
+      notices.length > 0 ? ` · ${notices[0]}` : ''
+    }`;
+    return {
+      moved: true,
+      fell: outcome.healthLoss > 0,
+      damage: outcome.healthLoss,
+      dc: outcome.dc,
+      total: outcome.total,
+      fact: outcome.fact,
+      notices,
+    };
+  }
 
   if (toolName === 'inspect_self_and_surroundings') {
     const focus = String(args.focus ?? 'tracks_and_area');
@@ -675,6 +839,29 @@ export function executeNarrativeToolCall(
     }
 
     if (notices.length > 0) fact += ` Dünya bildirimi: ${notices[0]}`;
+
+    // Tırmanış da fiziksel risk taşır: düşme zarı yoksa tırmanış "bedava" oluyordu.
+    let climbRisk: ActionRiskOutcome | null = null;
+    if (focus === 'climb_vantage' && !currentLocation) {
+      climbRisk = resolveActionRisk(
+        buildActionRiskInput(state, 'climb', state.playerActionText ?? '')
+      );
+      const p = state.protagonist;
+      const conditions = [...(p.activeConditions ?? [])];
+      if (climbRisk.condition && !conditions.includes(climbRisk.condition)) {
+        conditions.push(climbRisk.condition);
+      }
+      state.protagonist = {
+        ...p,
+        health: Math.max(5, p.health - climbRisk.healthLoss),
+        stamina: Math.max(5, p.stamina - climbRisk.staminaLoss),
+        activeConditions: conditions.slice(0, 4),
+        lastUpdatedMs: state.gameTimeMs,
+      };
+      state.rolledDiceThisTurn = true;
+      fact = `${climbRisk.fact} ${fact}`;
+    }
+
     state.engineFacts.push(fact);
 
     const priorPosture = detectScenePosture({
@@ -700,14 +887,27 @@ export function executeNarrativeToolCall(
       focus === 'climb_vantage' || priorPosture === 'treetop'
         ? ['Eşref şu an ağaç tepesinde: yerdeki toprak, yosun veya ayak sesi tasviri YAPMA!']
         : [];
+    const fellWhileClimbing = Boolean(climbRisk && climbRisk.healthLoss > 0);
     state.actionRecords.push({
-      category: 'observe',
-      subType: focus,
+      category: fellWhileClimbing ? 'survival' : 'observe',
+      subType: fellWhileClimbing ? 'descend_from_vantage' : focus,
       summary: fact,
-      outcomeTone: total >= 12 ? 'success' : 'fail',
+      outcomeTone: climbRisk
+        ? fellWhileClimbing
+          ? 'fail'
+          : climbRisk.degree === 'critical_success'
+          ? 'critical'
+          : 'success'
+        : total >= 12
+        ? 'success'
+        : 'fail',
       durationLabel: formatTravelHours(elapsedHours),
-      focusDirective: observeDirective,
-      forbiddenHints: observeForbidden,
+      focusDirective: climbRisk
+        ? `${climbRisk.focusDirective} ${observeDirective}`
+        : observeDirective,
+      forbiddenHints: fellWhileClimbing
+        ? ['Düştüğünü ve yaralandığını gizleme; ağaç tepesinde olduğunu söyleme.']
+        : observeForbidden,
     });
     applySleepCollapseOrFatigueNotice(state, false);
 
@@ -1701,18 +1901,26 @@ export function executeNarrativeToolCall(
       : 1;
   const elapsedHours = totalMinutes / 60;
   const summary = String(args.summary ?? 'Eşref çevresine uygun serbest bir eylem gerçekleştirdi.');
-  const staminaCost =
-    effort === 'none' || totalMinutes <= 5
-      ? 0
-      : effort === 'moderate'
-      ? Math.min(18, Math.max(2, Math.round(5 * Math.min(1, elapsedHours) + Math.max(0, elapsedHours - 1) * 2)))
-      : Math.min(10, Math.max(1, Math.round(2 * Math.min(1, elapsedHours) + Math.max(0, elapsedHours - 1))));
 
+  // Artık hiçbir serbest eylem "bedava" değil: eylemin sınıfına göre ilgili
+  // metrik, çevre ve yaklaşım etkenleriyle zar atılır ve sonuç motor gerçeğidir.
+  const riskCategory = inferRiskCategory(normalizeTr(summary));
+  const risk = resolveActionRisk(buildActionRiskInput(state, riskCategory, summary));
+  const trivial = effort === 'none' && totalMinutes <= 5;
+  const staminaCost = trivial ? Math.min(1, risk.staminaLoss) : risk.staminaLoss;
+  const riskConditions = [...(state.protagonist.activeConditions ?? [])];
+  if (risk.condition && !riskConditions.includes(risk.condition)) {
+    riskConditions.push(risk.condition);
+  }
   state.protagonist = {
     ...state.protagonist,
+    health: Math.max(5, state.protagonist.health - risk.healthLoss),
     stamina: Math.max(5, state.protagonist.stamina - staminaCost),
+    activeConditions: riskConditions.slice(0, 4),
     lastObservation: summary,
   };
+  state.rolledDiceThisTurn = true;
+  const freeRiskRecord = riskSceneRecord(risk);
 
   if (totalMinutes > 0) {
     const prevMs = state.gameTimeMs;
@@ -1749,16 +1957,18 @@ export function executeNarrativeToolCall(
         : staminaCost > 0
         ? `, -${staminaCost} Zindelik`
         : ''
-    }).${notices.length > 0 ? ` ${notices[0]}` : ''}`;
+    }). ${risk.fact}${notices.length > 0 ? ` ${notices[0]}` : ''}`;
     state.engineFacts.push(fact);
     state.actionRecords.push({
-      category: 'free_roleplay',
-      subType: 'free',
+      category: freeRiskRecord.category,
+      subType: freeRiskRecord.subType,
       summary: fact,
-      outcomeTone: 'neutral',
+      outcomeTone: freeRiskRecord.outcomeTone,
       durationLabel,
-      focusDirective: 'Serbest eylemin doğrudan sonucunu tekrar yapmadan 1–2 net cümlede anlat.',
-      forbiddenHints: [],
+      focusDirective: `${risk.focusDirective} Serbest eylemin doğrudan sonucunu tekrar yapmadan 1–2 net cümlede anlat.`,
+      forbiddenHints: risk.healthLoss > 0
+        ? ['Yaralanma/bedel sonucunu gizleme veya başarı gibi anlatma.', 'Can ve zindelik sayılarını birebir aktar.']
+        : [],
     });
     if (!isSleepAction) {
       applySleepCollapseOrFatigueNotice(state, false);
@@ -1766,16 +1976,19 @@ export function executeNarrativeToolCall(
     return { ok: true, minutesSpent: totalMinutes, hoursSpent: elapsedHours, summary: fact };
   }
 
-  state.engineFacts.push(summary);
+  const zeroFact = `${summary} ${risk.fact}`;
+  state.engineFacts.push(zeroFact);
   state.actionRecords.push({
-    category: 'free_roleplay',
-    subType: 'free',
-    summary,
-    outcomeTone: 'neutral',
-    focusDirective: 'Serbest eylemin doğrudan karşılığını kısa ve net anlat.',
-    forbiddenHints: [],
+    category: freeRiskRecord.category,
+    subType: freeRiskRecord.subType,
+    summary: zeroFact,
+    outcomeTone: freeRiskRecord.outcomeTone,
+    focusDirective: `${risk.focusDirective} Serbest eylemin doğrudan karşılığını kısa ve net anlat.`,
+    forbiddenHints: risk.healthLoss > 0
+      ? ['Yaralanma/bedel sonucunu gizleme veya başarı gibi anlatma.', 'Can ve zindelik sayılarını birebir aktar.']
+      : [],
   });
-  return { ok: true, minutesSpent: 0, hoursSpent: 0, summary };
+  return { ok: true, minutesSpent: 0, hoursSpent: 0, summary: zeroFact };
 }
 
 export interface AiTurnExecutionResult {
@@ -1942,7 +2155,13 @@ function runHeuristicEngineTurn(
     return;
   }
 
-  // 5. Tırmanma / İnceleme / Gözlem
+  // 5. İniş — yükseklikten düşme riski evrensel risk motoruyla çözülür.
+  if (!forceObserve && hasDescentIntent(norm)) {
+    executeNarrativeToolCall('descend_from_vantage', { note: rawText }, state);
+    return;
+  }
+
+  // 6. Tırmanma / İnceleme / Gözlem
   if (/\b(tirman\w*|agaca cik\w*|tepeye cik\w*)\b/.test(norm)) {
     executeNarrativeToolCall(
       'inspect_self_and_surroundings',

@@ -29,6 +29,14 @@ export function hasStealIntent(normText: string): boolean {
   return /\b(cal(?!is)\w*|hirsiz\w*|gasp\w*|harac\w*|tutsak\w*|kacir\w*)\b/.test(normText);
 }
 
+/** Ağaç/tepeden aşağı inme niyeti. Risk zarı bu eylem için atılır. */
+export function hasDescentIntent(normText: string): boolean {
+  return /\b(asagi\s+in\w*|agactan\s+(?:asagi\s+)?in\w*|yere\s+in\w*|inmeye(?:\s+\w+)?|iniyorum|inip|inecegim|inecek\w*)\b/.test(
+    normText
+  );
+}
+
+
 /** "1 gün", "3 saat", "yarım gün" gibi oyuncu bildirimlerini dakikaya çevirir. */
 export function parseRequestedDurationMinutes(rawText: string): number {
   const norm = normalizeTr(rawText);

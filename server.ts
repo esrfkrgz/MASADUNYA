@@ -239,6 +239,21 @@ const ENGINE_TOOL_DECLARATIONS: FunctionDeclaration[] = [
     },
   },
   {
+    name: 'descend_from_vantage',
+    description:
+      'Eşref ağaç tepesinde/ yüksek bir gözetleme noktasındayken aşağı iner. İniş fiziksel bir risk testiyle çözülür: kayıp düşme, yaralanma ve zindelik kaybı motor tarafından hesaplanır. Yerdeyken çağrılırsa risk oluşmadığı bildirilir.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        note: {
+          type: Type.STRING,
+          description: 'Oyuncunun inişi nasıl yaptığı (dikkatli/acele, yavaş vb.).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'travel_direction',
     description:
       'Eşrefi açık arazide belirli bir ana veya ara yöne doğru yürütür; zaman, yorgunluk, hava durumu ve olası yeni karşılaşmaları motor üzerinden işler.',
@@ -421,6 +436,7 @@ GÖREVİN (ADIM 1 - ARAÇ ÇAĞIRMA):
 - ÖNEMLİ: Tek bir cümlede birden fazla aşama varsa birden fazla araç çağırabilirsin. Örneğin:
   * "Yosunlardaki izleri inceleyip izlerin yönüne gizlice yürüyorum" -> Önce inspect_self_and_surroundings(tracks_and_area, durationMinutes: 10) çağır, motordan gerçek yön sonucunu aldıktan sonra ikinci adımda travel_direction çağır.
   * "Erzak yiyip güneye yürüyorum" -> use_inventory_or_eat(rations) ve travel_direction(Güney) çağır.
+  * "Ağaçtan aşağı iniyorum / inmeye çalışıyorum" -> descend_from_vantage çağır; motor kayma/düşme riskini Fiziksel zarıyla hesaplasın. İnişi "5 dakika geçti" diye geçiştirme.
 - ZAMAN AKIŞI (GERÇEKÇİ DAKİKA & SAAT): Zamanı eylemin gerçek boyutuna göre ilerlet! Kısa anlık eylemlerde ASLA 1 saat geçirme:
   * Birine sadece bakmak, hızlıca etrafa göz atmak, "merhaba/selam" demek veya tek cümlelik kısa bir şey sormak 1–3 dakika sürer (durationMinutes: 1 veya 2; ya da free_roleplay_action minutesSpent: 1).
   * Ceplerini/üzerini yoklamak 2–5 dk; dikkatli iz incelemek, ağaca tırmanmak veya handa söylenti toplamak 15–30 dk; ciddi sohbet/pazarlık/ikna 15–45 dk sürer.
@@ -457,6 +473,7 @@ Ana karakter Eşref (18 yaşında, 185 cm, esmer, atletik, karizmatik; hafıza k
 - FİZİKSEL KONUM TUTARLILIĞI: "Konum & Pozisyon" ne diyorsa ona uy. Örneğin Eşref ağaç tepesindeyse yerdeki toprak, yosun veya ayak sesinden bahsetme.
 - MOTOR SAYILARINA SADAKAT: [MOTOR KARARI / NE OLDU] içindeki mesafe, süre, saat, gümüş, erzak ve benzeri sayıları BİREBİR aktar. "0.4 fersah" yazıyorsa "0.4 fersah" yaz; "4 fersah" veya "dört fersah" yapma. Sayı yuvarlama, katlama veya tahmin etme.
 - EŞYA TUTARLILIĞI: "Çanta & Kese" veya motor sonucunda geçmeyen eşya ayrıntılarını (kılıf, matara, sandık, mektup, ip bağlama biçimi vb.) uydurma. "Kuru dere yatağı" kurudur; içinden su akıtma, su sesi çıkarma.
+- EVRENSEL RİSK SONUCU: [MOTOR KARARI / NE OLDU] içinde bir zar/DC/başarı-başarısızlık sonucu varsa bunu mutlaka anlat. Düşme, yaralanma, zindelik/gümüş/erzak kaybı gibi bedelleri "sadece 5 dakika geçti" diye geçiştirme; başarısızlığı başarı gibi sunma. Risk yoksa "risk oluşmadı" bilgisini de net aktar.
 
 === 4. NET, DUYUSAL VE ÖZ ANLATIM (TEKRAR YASAĞI) ===
 - ÜSLUP: Net, somut, duyusal odaklı ve öz 1–3 cümle yaz. Ağdalı edebi süslemeler, şiirsel benzetmeler ve basmakalıp klişeler ("ürkütücü bir melodi", "görkemli sessizlik", "sürekli aynı koku/sis tarifi") KESİNLİKLE YASAKTIR.
